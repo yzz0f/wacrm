@@ -132,6 +132,11 @@ export function TemplateManager() {
   // dialog title + CTA. Set to the template id to pre-fill from a row.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Template selected for the confirm-delete dialog. The destructive
+  // action goes through this two-step so a slip on the trash icon
+  // doesn't take the template off Meta as well as locally.
+  const [templateToDelete, setTemplateToDelete] =
+    useState<MessageTemplate | null>(null);
 
   // Body variable indices — `[1, 2, 3]` for "{{1}} {{2}} {{3}}". We
   // re-run the extractor on every render to keep the sample-value rows
@@ -240,12 +245,9 @@ export function TemplateManager() {
   }
 
   async function handleSubmit() {
-    if (form.category === 'Authentication') {
-      toast.error(
-        'AUTHENTICATION templates aren’t supported here yet — create them in Meta WhatsApp Manager and use Sync from Meta.',
-      );
-      return;
-    }
+    // AUTHENTICATION is blocked by the persistent banner + disabled
+    // submit button; this is a defensive second line of defense.
+    if (form.category === 'Authentication') return;
     try {
       setSubmitting(true);
       const isEdit = editingId !== null;
@@ -263,19 +265,21 @@ export function TemplateManager() {
           data?.error || `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status})`,
         );
       }
+      // Refresh first, then close — re-opening the dialog
+      // immediately should not show a stale list.
+      if (user) await fetchTemplates(user.id);
       toast.success(
         data.dry_run
           ? isEdit
             ? 'Template updated (dry-run — no Meta call)'
             : 'Template saved (dry-run — no Meta call)'
           : isEdit
-            ? 'Edit submitted — Meta will re-review.'
-            : 'Submitted to Meta — status will update once approved.',
+            ? 'Edit submitted — Meta typically reviews within 24 hours.'
+            : 'Submitted to Meta — typical review time is 24 hours. Status updates automatically.',
       );
       setDialogOpen(false);
       setForm(emptyForm);
       setEditingId(null);
-      if (user) await fetchTemplates(user.id);
     } catch (err) {
       console.error('Submit error:', err);
       toast.error(err instanceof Error ? err.message : 'Failed to submit');
@@ -309,8 +313,12 @@ export function TemplateManager() {
         toast.error(`Failed to sync: ${preview.join(', ')}${suffix}`);
       }
       if (data.truncated) {
-        toast.warning(
-          'Hit Meta pagination cap — more templates may exist. Contact support if this persists.',
+        // Use error (not warning) so the message survives long
+        // enough to read — sonner's `warning` auto-dismisses on
+        // the same short timer as `success`.
+        toast.error(
+          'Synced the first 2000 templates only — your account has more. Sync again to continue, or contact support if this persists.',
+          { duration: 10000 },
         );
       }
       await fetchTemplates(user.id);
@@ -322,14 +330,15 @@ export function TemplateManager() {
     }
   }
 
-  async function handleDelete(id: string) {
-    if (deletingId) return;
-    setDeletingId(id);
+  async function confirmDelete() {
+    const target = templateToDelete;
+    if (!target || deletingId) return;
+    setDeletingId(target.id);
     try {
       // Route handler scopes the Meta delete via hsm_id (so sibling
       // language variants survive) and falls through to remove the
       // local row. Local-only rows skip the Meta call.
-      const res = await fetch(`/api/whatsapp/templates/${id}`, {
+      const res = await fetch(`/api/whatsapp/templates/${target.id}`, {
         method: 'DELETE',
       });
       const data = await res.json().catch(() => ({}));
@@ -337,7 +346,8 @@ export function TemplateManager() {
         throw new Error(data?.error || `Delete failed (HTTP ${res.status})`);
       }
       toast.success('Template deleted');
-      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      setTemplates((prev) => prev.filter((t) => t.id !== target.id));
+      setTemplateToDelete(null);
     } catch (err) {
       console.error('Delete error:', err);
       toast.error(err instanceof Error ? err.message : 'Failed to delete template');
@@ -346,10 +356,57 @@ export function TemplateManager() {
     }
   }
 
-  function updateButton(index: number, patch: Partial<TemplateButton>) {
+  // The patch type unions every field across button variants. The
+  // conditional rendering below ensures only fields valid for the
+  // current button's `type` reach this function, so the runtime
+  // assertion + per-type spread preserves discriminated-union
+  // invariants without forcing every call site to thread the type
+  // through generics (which TS can't infer from a partial literal).
+  type ButtonPatch = {
+    text?: string;
+    url?: string;
+    phone_number?: string;
+    example?: string;
+  };
+  function updateButton(index: number, patch: ButtonPatch) {
     setForm((prev) => {
+      const current = prev.buttons[index];
+      if (!current) return prev;
       const next = [...prev.buttons];
-      next[index] = { ...next[index], ...patch } as TemplateButton;
+      // Per-variant spread keeps the discriminant pinned. Switch
+      // exhaustiveness is enforced by TypeScript.
+      switch (current.type) {
+        case 'QUICK_REPLY':
+          next[index] = {
+            ...current,
+            ...(patch.text !== undefined && { text: patch.text }),
+          };
+          break;
+        case 'URL':
+          next[index] = {
+            ...current,
+            ...(patch.text !== undefined && { text: patch.text }),
+            ...(patch.url !== undefined && { url: patch.url }),
+            ...(patch.example !== undefined && { example: patch.example }),
+          };
+          break;
+        case 'PHONE_NUMBER':
+          next[index] = {
+            ...current,
+            ...(patch.text !== undefined && { text: patch.text }),
+            ...(patch.phone_number !== undefined && {
+              phone_number: patch.phone_number,
+            }),
+          };
+          break;
+        case 'COPY_CODE':
+          next[index] = {
+            ...current,
+            ...(patch.text !== undefined && { text: patch.text }),
+            ...(patch.example !== undefined && { example: patch.example }),
+          };
+          break;
+      }
       return { ...prev, buttons: next };
     });
   }
@@ -487,40 +544,49 @@ export function TemplateManager() {
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-0.5 shrink-0 ml-2">
+                  <div className="flex items-center gap-1 shrink-0 ml-2">
                     {statusKey === 'APPROVED' && (
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="sm"
                         onClick={() => openEdit(template)}
-                        title="Edit — Meta will re-review the changes"
-                        className="text-slate-400 hover:text-primary hover:bg-primary/10"
+                        title="Editing triggers Meta re-review — status flips to PENDING."
+                        aria-label="Edit template"
+                        className="text-slate-300 hover:text-primary hover:bg-primary/10 h-8 px-2"
                       >
-                        <Pencil className="size-4" />
+                        <Pencil className="size-3.5" />
+                        Edit
                       </Button>
                     )}
                     {(statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="sm"
                         onClick={() => openEdit(template)}
-                        title="Edit and resubmit for approval"
-                        className="text-slate-400 hover:text-primary hover:bg-primary/10"
+                        title="Edit the template and resubmit to Meta for review."
+                        aria-label="Edit and resubmit template"
+                        className="text-slate-300 hover:text-primary hover:bg-primary/10 h-8 px-2"
                       >
-                        <RotateCcw className="size-4" />
+                        <RotateCcw className="size-3.5" />
+                        Resubmit
                       </Button>
                     )}
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleDelete(template.id)}
+                      onClick={() => setTemplateToDelete(template)}
                       disabled={deletingId === template.id}
+                      aria-label={
+                        template.meta_template_id
+                          ? 'Delete template from Meta and locally'
+                          : 'Delete template locally'
+                      }
                       title={
                         template.meta_template_id
                           ? 'Delete from Meta and locally'
                           : 'Delete locally'
                       }
-                      className="text-slate-400 hover:text-red-400 hover:bg-red-950/30"
+                      className="text-slate-400 hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
                     >
                       {deletingId === template.id ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -651,15 +717,15 @@ export function TemplateManager() {
               <Select
                 value={form.header_format}
                 onValueChange={(val) =>
+                  // Preserve header_content, header_media_url, and
+                  // header_sample across format switches. The submit
+                  // payload builder only reads the field that matches
+                  // the active format, so an orphan value on a hidden
+                  // field is harmless — and keeping it lets the user
+                  // switch formats to compare without losing typing.
                   setForm({
                     ...form,
                     header_format: (val || 'none') as HeaderFormat,
-                    header_content: val === 'text' ? form.header_content : '',
-                    header_media_url:
-                      val && val !== 'none' && val !== 'text'
-                        ? form.header_media_url
-                        : '',
-                    header_sample: val === 'text' ? form.header_sample : '',
                   })
                 }
               >
@@ -684,6 +750,8 @@ export function TemplateManager() {
               {form.header_format === 'text' && (
                 <div className="space-y-2 mt-2">
                   <Input
+                    id="template-header-text"
+                    aria-label="Header text"
                     placeholder="Header text (max 60 chars, optional {{1}})"
                     value={form.header_content}
                     onChange={(e) =>
@@ -694,6 +762,8 @@ export function TemplateManager() {
                   />
                   {headerVarCount > 0 && (
                     <Input
+                      id="template-header-sample"
+                      aria-label="Sample value for header variable"
                       placeholder="Sample value for {{1}} (required for Meta review)"
                       value={form.header_sample}
                       onChange={(e) =>
@@ -708,16 +778,23 @@ export function TemplateManager() {
               {headerNeedsMedia && (
                 <div className="space-y-2 mt-2">
                   <Input
-                    placeholder={`Public URL to a sample ${form.header_format} (https://…)`}
+                    placeholder={`https://… (public link to a sample ${form.header_format})`}
                     value={form.header_media_url}
                     onChange={(e) =>
                       setForm({ ...form, header_media_url: e.target.value })
                     }
                     className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
                   />
-                  <p className="text-[11px] text-slate-500">
-                    Meta fetches this once for the approval review. Direct file
-                    upload is coming in a follow-up.
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Must be publicly accessible HTTPS. Meta fetches it once
+                    during review, so the file needs to stay live for ~24 hrs.
+                    {form.header_format === 'image' &&
+                      ' Recommended: JPEG or PNG, ≥800×418 px, ≤5 MB.'}
+                    {form.header_format === 'video' &&
+                      ' Recommended: MP4 / 3GPP, ≤16 MB, ≤60 seconds.'}
+                    {form.header_format === 'document' &&
+                      ' Recommended: PDF, ≤100 MB.'}
+                    {' '}Direct file upload is coming in a follow-up.
                   </p>
                 </div>
               )}
@@ -745,19 +822,24 @@ export function TemplateManager() {
                   <Label className="text-[11px] text-slate-400">
                     Sample values (Meta uses these to review your template)
                   </Label>
-                  {form.body_samples.map((val, i) => (
-                    <Input
-                      key={i}
-                      placeholder={`Sample for {{${i + 1}}}`}
-                      value={val}
-                      onChange={(e) => {
-                        const next = [...form.body_samples];
-                        next[i] = e.target.value;
-                        setForm({ ...form, body_samples: next });
-                      }}
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
-                    />
-                  ))}
+                  {form.body_samples.map((val, i) => {
+                    const inputId = `template-body-sample-${i}`;
+                    return (
+                      <Input
+                        key={i}
+                        id={inputId}
+                        aria-label={`Sample value for body variable {{${i + 1}}}`}
+                        placeholder={`Sample for {{${i + 1}}}`}
+                        value={val}
+                        onChange={(e) => {
+                          const next = [...form.body_samples];
+                          next[i] = e.target.value;
+                          setForm({ ...form, body_samples: next });
+                        }}
+                        className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      />
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -805,9 +887,13 @@ export function TemplateManager() {
                       <div className="flex items-center gap-2">
                         <Select
                           value={btn.type}
-                          onValueChange={(val) =>
-                            changeButtonType(i, val as TemplateButton['type'])
-                          }
+                          onValueChange={(val) => {
+                            // Same null guard as the Header Select
+                            // (per PR 148): @base-ui Select fires
+                            // onValueChange(null) on deselect.
+                            if (!val) return;
+                            changeButtonType(i, val as TemplateButton['type']);
+                          }}
                         >
                           <SelectTrigger className="w-40 bg-slate-800 border-slate-700 text-white h-8 text-xs">
                             <SelectValue />
@@ -929,6 +1015,51 @@ export function TemplateManager() {
                 'Save & Resubmit'
               ) : (
                 'Submit for Approval'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm-delete dialog. Surfacing the meta_template_id case
+          separately so users understand a real Meta delete is happening,
+          not just a local cleanup. */}
+      <Dialog
+        open={templateToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setTemplateToDelete(null);
+        }}
+      >
+        <DialogContent className="bg-slate-900 border-slate-700 sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete template?</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              {templateToDelete?.meta_template_id
+                ? `"${templateToDelete?.name}" will be deleted from Meta and from wacrm. Active broadcasts using this template will start failing on their next send. This can't be undone.`
+                : `"${templateToDelete?.name}" will be deleted from wacrm. It was never submitted to Meta, so no remote cleanup is needed.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="bg-slate-900 border-slate-700">
+            <Button
+              variant="outline"
+              onClick={() => setTemplateToDelete(null)}
+              disabled={deletingId !== null}
+              className="border-slate-700 text-slate-300 hover:bg-slate-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmDelete}
+              disabled={deletingId !== null}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {deletingId !== null ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Deleting…
+                </>
+              ) : (
+                'Delete'
               )}
             </Button>
           </DialogFooter>

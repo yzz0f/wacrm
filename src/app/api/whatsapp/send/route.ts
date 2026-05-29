@@ -15,6 +15,7 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit'
 import type { MessageTemplate } from '@/types'
+import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
 
 export async function POST(request: Request) {
   try {
@@ -186,6 +187,10 @@ export async function POST(request: Request) {
     // index enforces — so multi-language templates work correctly.
     // Missing template falls through with `templateRow = null` and
     // the legacy body-only path runs.
+    // Load the template row so sendTemplateMessage can build header
+    // + button components from the definition. isMessageTemplate
+    // guards against a malformed row (e.g. from a partial sync)
+    // crashing the send-builder later in the stack.
     let templateRow: MessageTemplate | null = null
     if (message_type === 'template' && template_name) {
       const { data } = await supabase
@@ -195,7 +200,16 @@ export async function POST(request: Request) {
         .eq('name', template_name)
         .eq('language', template_language || 'en_US')
         .maybeSingle()
-      templateRow = (data ?? null) as MessageTemplate | null
+      if (data && !isMessageTemplate(data)) {
+        return NextResponse.json(
+          {
+            error:
+              'Template row is malformed locally — run "Sync from Meta" in Settings to repair it.',
+          },
+          { status: 500 },
+        )
+      }
+      templateRow = data ?? null
     }
 
     const attempt = async (phone: string): Promise<string> => {

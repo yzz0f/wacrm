@@ -5,7 +5,6 @@ import { createClient } from '@/lib/supabase/client';
 import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Loader2, FileText, ArrowRight } from 'lucide-react';
-import { templateStatusConfig } from '@/lib/template-status';
 
 const categoryColors: Record<string, string> = {
   Marketing: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -108,12 +107,9 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
                 <p className="line-clamp-3 text-xs text-slate-400">{template.body_text}</p>
                 <div className="flex items-center gap-2 text-[10px] text-slate-500">
                   <span>{template.language ?? 'en_US'}</span>
-                  {template.status && (
-                    <>
-                      <span>-</span>
-                      <span>{templateStatusConfig[template.status].label}</span>
-                    </>
-                  )}
+                  {/* Status is omitted on purpose — every template
+                      shown here is already filtered to APPROVED,
+                      so the chip carried no information. */}
                 </div>
               </button>
             );

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { submitMessageTemplate } from '@/lib/whatsapp/meta-api'
@@ -8,6 +9,54 @@ import {
 } from '@/lib/whatsapp/template-validators'
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
+
+/**
+ * Shared upsert payload builder — both the Meta-failure path and the
+ * Meta-success path write nearly identical rows; dropping the shared
+ * fields here means adding a column later only touches one spot.
+ */
+function buildUpsertRow(
+  userId: string,
+  payload: TemplatePayload,
+  extras: {
+    status: 'DRAFT' | string
+    metaTemplateId: string | null
+    submissionError: string | null
+  },
+) {
+  return {
+    user_id: userId,
+    name: payload.name,
+    category: payload.category,
+    language: payload.language,
+    header_type: payload.header_type ?? null,
+    header_content: payload.header_content ?? null,
+    header_media_url: payload.header_media_url ?? null,
+    header_handle: payload.header_handle ?? null,
+    body_text: payload.body_text,
+    footer_text: payload.footer_text ?? null,
+    buttons: payload.buttons ?? null,
+    sample_values: payload.sample_values ?? null,
+    status: extras.status,
+    meta_template_id: extras.metaTemplateId,
+    submission_error: extras.submissionError,
+    // Clear stale rejection_reason whenever we re-submit; the
+    // webhook will set it again if Meta still rejects.
+    rejection_reason: extras.submissionError ? null : null,
+    last_submitted_at: new Date().toISOString(),
+  }
+}
+
+async function upsertTemplateRow(
+  supabase: SupabaseClient,
+  row: ReturnType<typeof buildUpsertRow>,
+) {
+  return supabase
+    .from('message_templates')
+    .upsert(row, { onConflict: 'user_id,name,language' })
+    .select()
+    .single()
+}
 
 /**
  * Submit a template to Meta for approval AND persist it locally.
@@ -108,30 +157,16 @@ export async function POST(request: Request) {
         metaStatus = meta.status
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Meta submit failed.'
-        // Persist the failure so the user can retry; tag with a 429
-        // hint if Meta's rate-limit response leaked through.
-        await supabase
-          .from('message_templates')
-          .upsert(
-            {
-              user_id: user.id,
-              name: payload.name,
-              category: payload.category,
-              language: payload.language,
-              header_type: payload.header_type ?? null,
-              header_content: payload.header_content ?? null,
-              header_media_url: payload.header_media_url ?? null,
-              header_handle: payload.header_handle ?? null,
-              body_text: payload.body_text,
-              footer_text: payload.footer_text ?? null,
-              buttons: payload.buttons ?? null,
-              sample_values: payload.sample_values ?? null,
-              status: 'DRAFT',
-              submission_error: message,
-              last_submitted_at: new Date().toISOString(),
-            },
-            { onConflict: 'user_id,name,language' },
-          )
+        // Persist the failure so the user can retry; row stays DRAFT
+        // until they fix and re-submit.
+        await upsertTemplateRow(
+          supabase,
+          buildUpsertRow(user.id, payload, {
+            status: 'DRAFT',
+            metaTemplateId: null,
+            submissionError: message,
+          }),
+        )
         const isRateLimit = /\b429\b/.test(message)
         return NextResponse.json(
           {
@@ -144,32 +179,14 @@ export async function POST(request: Request) {
       }
     }
 
-    const { data: row, error: upsertErr } = await supabase
-      .from('message_templates')
-      .upsert(
-        {
-          user_id: user.id,
-          name: payload.name,
-          category: payload.category,
-          language: payload.language,
-          header_type: payload.header_type ?? null,
-          header_content: payload.header_content ?? null,
-          header_media_url: payload.header_media_url ?? null,
-          header_handle: payload.header_handle ?? null,
-          body_text: payload.body_text,
-          footer_text: payload.footer_text ?? null,
-          buttons: payload.buttons ?? null,
-          sample_values: payload.sample_values ?? null,
-          status: normalizeStatus(metaStatus),
-          meta_template_id: metaTemplateId,
-          submission_error: null,
-          rejection_reason: null,
-          last_submitted_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id,name,language' },
-      )
-      .select()
-      .single()
+    const { data: row, error: upsertErr } = await upsertTemplateRow(
+      supabase,
+      buildUpsertRow(user.id, payload, {
+        status: normalizeStatus(metaStatus),
+        metaTemplateId,
+        submissionError: null,
+      }),
+    )
 
     if (upsertErr) {
       // The submit succeeded on Meta's side but we failed to persist
