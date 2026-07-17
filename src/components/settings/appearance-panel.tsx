@@ -6,6 +6,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { MODES, THEMES, type Mode, type ThemeId } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
+import { LocaleSwitcher } from "./locale-switcher";
 import { SettingsPanelHead } from "./settings-panel-head";
 
 /**
@@ -51,6 +52,10 @@ export function AppearancePanel() {
             />
           ))}
         </div>
+      </div>
+
+      <div className="mt-8">
+        <LocaleSwitcher />
       </div>
 
       <div className="mt-8 space-y-4">
