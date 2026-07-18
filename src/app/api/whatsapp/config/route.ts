@@ -7,6 +7,7 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
+import { checkPlanLimit } from '@/lib/billing/limits'
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -318,6 +319,20 @@ export async function POST(request: Request) {
         )
       }
       existing = accountLines?.[0] ?? null
+    }
+
+    // Creating a new line (not updating an existing one) — enforce
+    // the account's plan limit before doing any more work (Meta
+    // verification, encryption, etc.) on a save that's going to be
+    // rejected anyway.
+    if (existing === null) {
+      const limitCheck = await checkPlanLimit(supabase, accountId, 'lines')
+      if (!limitCheck.allowed) {
+        return NextResponse.json(
+          { error: `Your plan allows up to ${limitCheck.limit} WhatsApp line(s). Upgrade to add more.` },
+          { status: 402 },
+        )
+      }
     }
 
     const sameNumber =
