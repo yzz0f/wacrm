@@ -19,6 +19,7 @@ import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
 function buildUpsertRow(
   accountId: string,
   userId: string,
+  lineId: string,
   payload: TemplatePayload,
   extras: {
     status: 'DRAFT' | string
@@ -31,6 +32,9 @@ function buildUpsertRow(
     // of migration 017. Without this an INSERT throws on the
     // not-null constraint.
     account_id: accountId,
+    // Which WhatsApp line (WABA) this template belongs to — templates
+    // are approved per-WABA, so this can't be shared across lines.
+    line_id: lineId,
     // Original author — kept as audit only. The unique index is
     // still on (user_id, name, language) — see the upsert helper
     // for the cross-teammate dedup follow-up.
@@ -75,7 +79,7 @@ async function upsertTemplateRow(
 /**
  * Submit a template to Meta for approval AND persist it locally.
  *
- * Auth → fetch whatsapp_config → validate → (DRY_RUN short-circuit) →
+ * Auth → resolve line → validate → (DRY_RUN short-circuit) →
  * POST to Meta → upsert local row by (user_id, name, language) with
  * status, meta_template_id, sample_values, last_submitted_at.
  *
@@ -97,7 +101,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Resolve the caller's account_id — whatsapp_config + the
+    // Resolve the caller's account_id — the line + the
     // message_templates row are account-scoped post-multi-user.
     const { data: profile } = await supabase
       .from('profiles')
@@ -113,10 +117,30 @@ export async function POST(request: Request) {
     }
 
     let payload: TemplatePayload
+    let requestedLineId: string | undefined
     try {
-      payload = (await request.json()) as TemplatePayload
+      const body = (await request.json()) as TemplatePayload & { line_id?: string }
+      requestedLineId = body.line_id
+      payload = body
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 })
+    }
+
+    // Resolve which line (WABA) this template belongs to. Falls back
+    // to the account's default line when omitted, same precedence as
+    // /api/whatsapp/config.
+    const lineQuery = requestedLineId
+      ? supabase.from('whatsapp_lines').select('*').eq('id', requestedLineId).eq('account_id', accountId)
+      : supabase.from('whatsapp_lines').select('*').eq('account_id', accountId).eq('is_default', true)
+    const { data: line, error: lineError } = await lineQuery.maybeSingle()
+    if (lineError || !line) {
+      return NextResponse.json(
+        {
+          error:
+            'WhatsApp not configured. Connect your WhatsApp Business account in Settings first.',
+        },
+        { status: 400 },
+      )
     }
 
     if (payload.category === 'Authentication') {
@@ -149,20 +173,7 @@ export async function POST(request: Request) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`
       metaStatus = 'PENDING'
     } else {
-      const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('account_id', accountId)
-        .single()
-      if (configError || !config) {
-        return NextResponse.json(
-          {
-            error:
-              'WhatsApp not configured. Connect your WhatsApp Business account in Settings first.',
-          },
-          { status: 400 },
-        )
-      }
+      const config = line
       if (!config.waba_id) {
         return NextResponse.json(
           {
@@ -203,7 +214,7 @@ export async function POST(request: Request) {
         // until they fix and re-submit.
         await upsertTemplateRow(
           supabase,
-          buildUpsertRow(accountId, user.id, payload, {
+          buildUpsertRow(accountId, user.id, line.id, payload, {
             status: 'DRAFT',
             metaTemplateId: null,
             submissionError: message,
@@ -223,7 +234,7 @@ export async function POST(request: Request) {
 
     const { data: row, error: upsertErr } = await upsertTemplateRow(
       supabase,
-      buildUpsertRow(accountId, user.id, payload, {
+      buildUpsertRow(accountId, user.id, line.id, payload, {
         status: normalizeStatus(metaStatus),
         metaTemplateId,
         submissionError: null,

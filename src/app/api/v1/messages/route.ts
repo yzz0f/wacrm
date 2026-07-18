@@ -102,7 +102,8 @@ export async function POST(request: Request) {
       ctx.supabase,
       ctx.accountId,
       to,
-      typeof body.name === 'string' ? body.name : null
+      typeof body.name === 'string' ? body.name : null,
+      typeof body.line_id === 'string' ? body.line_id : null
     );
 
     const result = await sendMessageToConversation(

@@ -32,8 +32,8 @@ async function resolveAccountId(
 }
 
 // Lazy-initialised service-role client. We need it to detect a
-// phone_number_id already claimed by a *different* user — under RLS,
-// the user's own session can't see other users' rows, so the conflict
+// phone_number_id already claimed by a *different* account — under RLS,
+// the user's own session can't see other accounts' rows, so the conflict
 // would be invisible without the service role.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _adminClient: any = null
@@ -48,11 +48,16 @@ function supabaseAdmin() {
 }
 
 /**
- * GET /api/whatsapp/config
+ * GET /api/whatsapp/config?line_id=<uuid>
  *
- * Used by the "Test API Connection" button and by the page to check
- * whether the saved config is healthy. Returns 200 in all non-auth cases
- * so the UI can render an appropriate message rather than show a 500.
+ * Used by the "Test API Connection" button and by the Lines settings
+ * page to check whether a saved line is healthy. Returns 200 in all
+ * non-auth cases so the UI can render an appropriate message rather
+ * than show a 500.
+ *
+ * `line_id` is optional — omitting it checks the account's default
+ * line (back-compat for callers that predate multi-line, and the
+ * common single-line case).
  *
  * Response shape:
  *   { connected: true,  phone_info: {...} }
@@ -60,7 +65,7 @@ function supabaseAdmin() {
  *   { connected: false, reason: 'token_corrupted',  message: '...', needs_reset: true }
  *   { connected: false, reason: 'meta_api_error',   message: '...' }
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -85,14 +90,22 @@ export async function GET() {
       )
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token, status')
-      .eq('account_id', accountId)
-      .maybeSingle()
+    const lineId = new URL(request.url).searchParams.get('line_id')
+    const lineQuery = lineId
+      ? supabase
+          .from('whatsapp_lines')
+          .select('phone_number_id, access_token, status')
+          .eq('id', lineId)
+          .eq('account_id', accountId)
+      : supabase
+          .from('whatsapp_lines')
+          .select('phone_number_id, access_token, status')
+          .eq('account_id', accountId)
+          .eq('is_default', true)
+    const { data: config, error: configError } = await lineQuery.maybeSingle()
 
     if (configError) {
-      console.error('Error fetching whatsapp_config:', configError)
+      console.error('Error fetching whatsapp_lines:', configError)
       return NextResponse.json(
         { connected: false, reason: 'db_error', message: 'Failed to fetch configuration' },
         { status: 200 }
@@ -160,8 +173,18 @@ export async function GET() {
 /**
  * POST /api/whatsapp/config
  *
- * Saves or updates the WhatsApp config for the authenticated user.
+ * Saves or updates a WhatsApp line for the authenticated account.
  * Verifies credentials with Meta first, then encrypts and stores.
+ *
+ * Body accepts an optional `line_id`:
+ *   - present  → update that existing line (404 if it doesn't belong
+ *     to this account).
+ *   - absent, account has zero lines → create the first one, marked
+ *     as the account's default.
+ *   - absent, account has exactly one line → update that line (keeps
+ *     old single-line callers working without changes).
+ *   - absent, account has 2+ lines → ambiguous, 400. The caller must
+ *     say which line it means once there's more than one.
  */
 export async function POST(request: Request) {
   try {
@@ -185,7 +208,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const { line_id, name, phone_number_id, waba_id, access_token, verify_token, pin } = body
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
@@ -204,14 +227,13 @@ export async function POST(request: Request) {
     }
 
     // Reject if another account has already claimed this phone_number_id.
-    // wacrm is single-tenant-per-WhatsApp-number — letting two accounts
-    // bind the same number causes the webhook's `.single()` lookup to
-    // throw PGRST116 ("multiple rows"), silently dropping every
-    // inbound message. See issue #136. Post-multi-user we key on
-    // account_id (not user_id) since teammates inside the same account
-    // all share one config; the conflict is between accounts.
+    // A number can only ever belong to one line, anywhere on this
+    // instance — letting two accounts (or two lines) bind the same
+    // number causes the webhook's `.single()` lookup to throw PGRST116
+    // ("multiple rows"), silently dropping every inbound message. See
+    // issue #136.
     const { data: claimed, error: claimedError } = await supabaseAdmin()
-      .from('whatsapp_config')
+      .from('whatsapp_lines')
       .select('account_id')
       .eq('phone_number_id', phone_number_id)
       .neq('account_id', accountId)
@@ -229,7 +251,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one wacrm user.',
+            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one line.',
         },
         { status: 409 }
       )
@@ -251,32 +273,40 @@ export async function POST(request: Request) {
       )
     }
 
-    // Encrypt sensitive tokens before storing
-    let encryptedAccessToken: string
-    let encryptedVerifyToken: string | null
-    try {
-      encryptedAccessToken = encrypt(access_token)
-      encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown encryption error'
-      console.error('Encryption failed:', message)
-      return NextResponse.json(
-        {
-          error:
-            'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
-        },
-        { status: 500 }
-      )
+    // Resolve which line row this save targets — see the doc comment
+    // above for the precedence rules.
+    let existing: { id: string; registered_at: string | null; phone_number_id: string; is_default: boolean } | null = null
+    if (line_id) {
+      const { data } = await supabase
+        .from('whatsapp_lines')
+        .select('id, registered_at, phone_number_id, is_default')
+        .eq('id', line_id)
+        .eq('account_id', accountId)
+        .maybeSingle()
+      if (!data) {
+        return NextResponse.json({ error: 'Line not found' }, { status: 404 })
+      }
+      existing = data
+    } else {
+      const { data: accountLines, error: linesError } = await supabase
+        .from('whatsapp_lines')
+        .select('id, registered_at, phone_number_id, is_default')
+        .eq('account_id', accountId)
+      if (linesError) {
+        console.error('Error listing account lines:', linesError)
+        return NextResponse.json(
+          { error: 'Failed to validate configuration' },
+          { status: 500 }
+        )
+      }
+      if (accountLines && accountLines.length > 1) {
+        return NextResponse.json(
+          { error: 'This account has more than one line — specify line_id.' },
+          { status: 400 }
+        )
+      }
+      existing = accountLines?.[0] ?? null
     }
-
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
-      .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
 
     const sameNumber =
       existing?.phone_number_id === phone_number_id &&
@@ -350,6 +380,24 @@ export async function POST(request: Request) {
       }
     }
 
+    // Encrypt sensitive tokens before storing
+    let encryptedAccessToken: string
+    let encryptedVerifyToken: string | null
+    try {
+      encryptedAccessToken = encrypt(access_token)
+      encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown encryption error'
+      console.error('Encryption failed:', message)
+      return NextResponse.json(
+        {
+          error:
+            'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
+        },
+        { status: 500 }
+      )
+    }
+
     // Persist everything in one shot. If /register failed we still
     // store the credentials and the error so the UI can guide the
     // user through a retry.
@@ -364,36 +412,38 @@ export async function POST(request: Request) {
       subscribed_apps_at: subscribedAppsAt ?? null,
       last_registration_error: registrationError,
       updated_at: new Date().toISOString(),
+      ...(typeof name === 'string' && name.trim() ? { name: name.trim() } : {}),
     }
 
     if (existing) {
       const { error: updateError } = await supabase
-        .from('whatsapp_config')
+        .from('whatsapp_lines')
         .update(baseRow)
-        .eq('account_id', accountId)
+        .eq('id', existing.id)
 
       if (updateError) {
-        console.error('Error updating whatsapp_config:', updateError)
+        console.error('Error updating whatsapp_lines:', updateError)
         return NextResponse.json(
           { error: 'Failed to update configuration' },
           { status: 500 }
         )
       }
     } else {
-      // Insert with both columns: `account_id` is the tenancy key
-      // (NOT NULL post-017, UNIQUE so duplicates trip the constraint
-      // up-front), `user_id` is the audit column identifying which
-      // member of the account saved the config.
+      // First line for this account — mark it default. Insert with
+      // both `account_id` (tenancy key) and `user_id` (audit column
+      // identifying which member of the account saved the line).
       const { error: insertError } = await supabase
-        .from('whatsapp_config')
+        .from('whatsapp_lines')
         .insert({
           account_id: accountId,
           user_id: user.id,
+          name: typeof name === 'string' && name.trim() ? name.trim() : 'Línea principal',
+          is_default: true,
           ...baseRow,
         })
 
       if (insertError) {
-        console.error('Error inserting whatsapp_config:', insertError)
+        console.error('Error inserting whatsapp_lines:', insertError)
         return NextResponse.json(
           { error: 'Failed to save configuration' },
           { status: 500 }
@@ -432,13 +482,19 @@ export async function POST(request: Request) {
 }
 
 /**
- * DELETE /api/whatsapp/config
+ * DELETE /api/whatsapp/config?line_id=<uuid>
  *
- * Removes the authenticated user's WhatsApp configuration row.
- * Used by the "Reset Configuration" button to recover from a corrupted
- * encrypted token (mismatched ENCRYPTION_KEY across environments).
+ * Removes a WhatsApp line row. `line_id` is optional (back-compat:
+ * omitting it targets the account's default line) — used both by the
+ * "Reset Configuration" recovery flow (corrupted encrypted token) and
+ * by the Lines settings page's per-line delete action.
+ *
+ * Refuses to delete a line with active conversations, same guard
+ * shape as Pipelines' "can't delete a stage with deals in it"
+ * (src/components/pipelines/pipeline-settings.tsx) — move or close
+ * the conversations first, or leave the line connected but unused.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -459,13 +515,45 @@ export async function DELETE() {
       )
     }
 
+    const lineId = new URL(request.url).searchParams.get('line_id')
+    const lineQuery = lineId
+      ? supabase.from('whatsapp_lines').select('id').eq('id', lineId).eq('account_id', accountId)
+      : supabase
+          .from('whatsapp_lines')
+          .select('id')
+          .eq('account_id', accountId)
+          .eq('is_default', true)
+    const { data: target, error: targetError } = await lineQuery.maybeSingle()
+
+    if (targetError) {
+      console.error('Error resolving line to delete:', targetError)
+      return NextResponse.json({ error: 'Failed to delete configuration' }, { status: 500 })
+    }
+    if (!target) {
+      return NextResponse.json({ error: 'Line not found' }, { status: 404 })
+    }
+
+    const { count } = await supabase
+      .from('conversations')
+      .select('id', { count: 'exact', head: true })
+      .eq('line_id', target.id)
+    if (count && count > 0) {
+      return NextResponse.json(
+        {
+          error:
+            'This line has active conversations. Move or close them first, or archive the line instead of deleting it.',
+        },
+        { status: 409 },
+      )
+    }
+
     const { error: deleteError } = await supabase
-      .from('whatsapp_config')
+      .from('whatsapp_lines')
       .delete()
-      .eq('account_id', accountId)
+      .eq('id', target.id)
 
     if (deleteError) {
-      console.error('Error deleting whatsapp_config:', deleteError)
+      console.error('Error deleting whatsapp_lines:', deleteError)
       return NextResponse.json(
         { error: 'Failed to delete configuration' },
         { status: 500 }

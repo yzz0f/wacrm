@@ -31,9 +31,8 @@ export async function GET(
       )
     }
 
-    // Resolve the caller's account_id — whatsapp_config is one-per-
-    // account post-multi-user, so a teammate fetching media for a
-    // conversation in the shared inbox needs the account's config,
+    // Resolve the caller's account_id — a teammate fetching media for
+    // a conversation in the shared inbox needs the account's line,
     // not their personal (non-existent) row.
     const { data: profile } = await supabase
       .from('profiles')
@@ -48,12 +47,40 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    // Resolve which line this media belongs to via the message that
+    // references it (media_url is stamped as this exact proxy path
+    // when the webhook first parses an inbound media message — see
+    // src/app/api/whatsapp/webhook/route.ts), then its conversation's
+    // line_id. Scoping the conversation lookup to accountId means a
+    // teammate can't fetch another account's media by guessing a
+    // mediaId.
+    const { data: message } = await supabase
+      .from('messages')
+      .select('conversation_id')
+      .eq('media_url', `/api/whatsapp/media/${mediaId}`)
+      .maybeSingle()
+    let messageLineId: string | undefined
+    if (message?.conversation_id) {
+      const { data: conversation } = await supabase
+        .from('conversations')
+        .select('line_id')
+        .eq('id', message.conversation_id)
+        .eq('account_id', accountId)
+        .maybeSingle()
+      messageLineId = conversation?.line_id ?? undefined
+    }
+
+    // Fetch and decrypt the line's credentials. Falls back to the
+    // account's default line when the message lookup above didn't
+    // resolve one (e.g. media requested before its message row landed).
+    const lineQuery = messageLineId
+      ? supabase.from('whatsapp_lines').select('*').eq('id', messageLineId)
+      : supabase
+          .from('whatsapp_lines')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('is_default', true)
+    const { data: config, error: configError } = await lineQuery.single()
 
     if (configError || !config) {
       return NextResponse.json(

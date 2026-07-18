@@ -122,7 +122,7 @@ function extractSampleValues(
   return sv
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -135,8 +135,8 @@ export async function POST() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Resolve the caller's account_id — both whatsapp_config and
-    // the message_templates we sync into are account-scoped.
+    // Resolve the caller's account_id — both the line and the
+    // message_templates we sync into are account-scoped.
     const { data: profile } = await supabase
       .from('profiles')
       .select('account_id')
@@ -150,11 +150,17 @@ export async function POST() {
       )
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    // Optional `line_id` body — falls back to the account's default
+    // line, same precedence as /api/whatsapp/config. Each line has
+    // its own WABA, so templates are synced (and deduped) per line.
+    const requestedLineId = await request
+      .json()
+      .then((b: { line_id?: string }) => b?.line_id)
+      .catch(() => undefined)
+    const lineQuery = requestedLineId
+      ? supabase.from('whatsapp_lines').select('*').eq('id', requestedLineId).eq('account_id', accountId)
+      : supabase.from('whatsapp_lines').select('*').eq('account_id', accountId).eq('is_default', true)
+    const { data: config, error: configError } = await lineQuery.single()
 
     if (configError || !config) {
       return NextResponse.json(
@@ -237,6 +243,7 @@ export async function POST() {
         // route. account_id is NOT NULL on message_templates
         // post-017, so an INSERT without it errors.
         account_id: accountId,
+        line_id: config.id,
         user_id: user.id,
         name: t.name,
         category: normalizeCategory(t.category),
@@ -258,6 +265,7 @@ export async function POST() {
         .from('message_templates')
         .select('id')
         .eq('account_id', accountId)
+        .eq('line_id', config.id)
         .eq('name', t.name)
         .eq('language', t.language)
         .maybeSingle()

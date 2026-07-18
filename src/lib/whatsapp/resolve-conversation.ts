@@ -42,7 +42,11 @@ export async function resolveConversationByPhone(
   db: SupabaseClient,
   accountId: string,
   phone: string,
-  name?: string | null
+  name?: string | null,
+  /** Which line to start this conversation on if it doesn't exist yet.
+   *  Falls back to the account's default line when omitted — the
+   *  common case, and every caller that predates multi-line. */
+  lineId?: string | null
 ): Promise<ResolvedConversation> {
   const sanitized = sanitizePhoneForMeta(phone);
   if (!isValidE164(sanitized)) {
@@ -53,13 +57,14 @@ export async function resolveConversationByPhone(
     );
   }
 
-  // Fail fast (and create nothing) when the account has no WhatsApp
-  // connected — the same error the send would raise anyway.
-  const { data: config } = await db
-    .from('whatsapp_config')
-    .select('id')
-    .eq('account_id', accountId)
-    .maybeSingle();
+  // Fail fast (and create nothing) when the account has no matching
+  // WhatsApp line connected — the same error the send would raise
+  // anyway. Also resolves the line to stamp on a newly-created
+  // conversation below.
+  const lineQuery = lineId
+    ? db.from('whatsapp_lines').select('id').eq('id', lineId).eq('account_id', accountId)
+    : db.from('whatsapp_lines').select('id').eq('account_id', accountId).eq('is_default', true);
+  const { data: config } = await lineQuery.maybeSingle();
   if (!config) {
     throw new SendMessageError(
       'whatsapp_not_configured',
@@ -137,8 +142,9 @@ export async function resolveConversationByPhone(
   }
 
   // ---- conversation -------------------------------------------
-  // One conversation per (account, contact) — same convention as the
-  // webhook. Order oldest-first and take one row rather than
+  // One conversation per (account, contact, line) — same convention
+  // as the webhook (a contact gets a separate thread per line that
+  // messages them). Order oldest-first and take one row rather than
   // `.maybeSingle()`, which errors on ≥2 rows: if duplicates predate the
   // unique index (migration 036), we resolve to the canonical survivor
   // instead of falling through and creating yet another (issue #363).
@@ -146,7 +152,8 @@ export async function resolveConversationByPhone(
     db,
     accountId,
     contactId,
-    ownerUserId
+    ownerUserId,
+    config.id
   );
 
   return { conversationId, contactId, contactCreated };
@@ -162,13 +169,15 @@ async function findOrCreateConversationRow(
   db: SupabaseClient,
   accountId: string,
   contactId: string,
-  ownerUserId: string
+  ownerUserId: string,
+  lineId: string
 ): Promise<string> {
   const { data: existing, error: findErr } = await db
     .from('conversations')
     .select('id')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
+    .eq('line_id', lineId)
     .order('created_at', { ascending: true })
     .limit(1);
 
@@ -187,6 +196,7 @@ async function findOrCreateConversationRow(
       account_id: accountId,
       user_id: ownerUserId,
       contact_id: contactId,
+      line_id: lineId,
     })
     .select('id')
     .single();
@@ -198,6 +208,7 @@ async function findOrCreateConversationRow(
         .select('id')
         .eq('account_id', accountId)
         .eq('contact_id', contactId)
+        .eq('line_id', lineId)
         .order('created_at', { ascending: true })
         .limit(1);
       if (raced && raced.length > 0) {
