@@ -2,6 +2,27 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  // Host-based routing for the platform admin panel: admin.<domain>
+  // serves /platform-admin/* pages from the same deployment as the
+  // main app, no separate hosting needed. `/api/*` is excluded —
+  // API routes are reached at their literal path regardless of host
+  // (the admin UI calls `/api/platform-admin/...` relative to
+  // admin.<domain>; rewriting that too would double-prefix it into
+  // `/platform-admin/api/platform-admin/...` and 404). The actual
+  // `is_platform_admin` check happens per-route/page
+  // (requirePlatformAdmin(), see src/lib/platform-admin/auth.ts),
+  // not here — same pattern as requireRole() living in routes rather
+  // than in this middleware.
+  const host = request.headers.get('host') ?? ''
+  const adminHost = process.env.PLATFORM_ADMIN_HOST
+  if (adminHost && host === adminHost && !request.nextUrl.pathname.startsWith('/api')) {
+    const url = request.nextUrl.clone()
+    if (!url.pathname.startsWith('/platform-admin')) {
+      url.pathname = `/platform-admin${url.pathname === '/' ? '' : url.pathname}`
+    }
+    return NextResponse.rewrite(url)
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
