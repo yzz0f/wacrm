@@ -69,6 +69,8 @@ export interface Account {
  * avatar + role only.
  */
 export interface AccountMember {
+  /** profiles.id — the FK target for line_access.profile_id. */
+  id: string;
   user_id: string;
   full_name: string;
   email: string | null;

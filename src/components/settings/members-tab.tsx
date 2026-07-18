@@ -77,12 +77,19 @@ import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
 
 interface Member {
+  id: string;
   user_id: string;
   full_name: string;
   email: string | null;
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+}
+
+interface LineOption {
+  id: string;
+  name: string;
+  is_default: boolean;
 }
 
 interface Invitation {
@@ -140,12 +147,22 @@ export function MembersTab() {
     null,
   );
 
+  // Line access — which agent/viewer profiles can see which lines
+  // (migration 037's line_access table). Loaded alongside the
+  // roster; only meaningful once the account has 2+ lines.
+  const [lineOptions, setLineOptions] = useState<LineOption[]>([]);
+  const [lineAccess, setLineAccess] = useState<Map<string, Set<string>>>(new Map());
+  const [pendingLineToggle, setPendingLineToggle] = useState<string | null>(null);
+
   const loadEverything = useCallback(async () => {
     try {
-      const [mres, ires] = await Promise.all([
+      const [mres, ires, lres] = await Promise.all([
         fetch('/api/account/members', { cache: 'no-store' }),
         canManageMembers
           ? fetch('/api/account/invitations', { cache: 'no-store' })
+          : Promise.resolve(null),
+        canManageMembers
+          ? fetch('/api/account/line-access', { cache: 'no-store' })
           : Promise.resolve(null),
       ]);
 
@@ -168,6 +185,24 @@ export function MembersTab() {
       } else {
         setInvitations([]);
       }
+
+      if (lres) {
+        if (lres.ok) {
+          const ldata = (await lres.json()) as {
+            lines: LineOption[];
+            access: { line_id: string; profile_id: string }[];
+          };
+          setLineOptions(ldata.lines);
+          const next = new Map<string, Set<string>>();
+          for (const row of ldata.access) {
+            if (!next.has(row.profile_id)) next.set(row.profile_id, new Set());
+            next.get(row.profile_id)!.add(row.line_id);
+          }
+          setLineAccess(next);
+        }
+        // Non-fatal on failure — the roster/invitations above already
+        // loaded; the line-access section just won't render.
+      }
     } catch (err) {
       console.error('[MembersTab] load error:', err);
       toast.error('Could not reach the server');
@@ -179,6 +214,35 @@ export function MembersTab() {
   useEffect(() => {
     void loadEverything();
   }, [loadEverything]);
+
+  async function handleToggleLineAccess(member: Member, lineId: string) {
+    const current = lineAccess.get(member.id) ?? new Set<string>();
+    const next = new Set(current);
+    if (next.has(lineId)) next.delete(lineId);
+    else next.add(lineId);
+
+    // Optimistic — flip the chip immediately, revert on failure.
+    setPendingLineToggle(`${member.id}:${lineId}`);
+    setLineAccess((prev) => new Map(prev).set(member.id, next));
+    try {
+      const res = await fetch('/api/account/line-access', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: member.id, line_ids: Array.from(next) }),
+      });
+      if (!res.ok) {
+        setLineAccess((prev) => new Map(prev).set(member.id, current));
+        const payload = await res.json().catch(() => ({}));
+        toast.error(payload.error || 'Failed to update line access');
+      }
+    } catch (err) {
+      setLineAccess((prev) => new Map(prev).set(member.id, current));
+      console.error('[MembersTab] line access toggle error:', err);
+      toast.error('Could not reach the server');
+    } finally {
+      setPendingLineToggle(null);
+    }
+  }
 
   async function handleRoleChange(member: Member, nextRole: AccountRole) {
     if (member.role === nextRole) return;
@@ -559,6 +623,67 @@ export function MembersTab() {
           )}
         </div>
       </RequireRole>
+
+      {/* Line access — only meaningful once the account has more than
+          one WhatsApp line. With a single line, restricting access to
+          it would just mean "sees everything" or "sees nothing",
+          neither of which needs a UI. */}
+      {canManageMembers && lineOptions.length > 1 && (
+        <div>
+          <div className="mb-2">
+            <h3 className="text-sm font-semibold text-foreground">
+              {t('lineAccessTitle')}
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t('lineAccessDesc')}
+            </p>
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              <ul className="divide-y divide-border">
+                {members
+                  .filter((m) => m.role === 'agent' || m.role === 'viewer')
+                  .map((member) => {
+                    const access = lineAccess.get(member.id) ?? new Set<string>();
+                    return (
+                      <li
+                        key={member.id}
+                        className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
+                      >
+                        <div className="min-w-0 sm:w-48 sm:shrink-0">
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {member.full_name || t('unnamed')}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {lineOptions.map((line) => {
+                            const active = access.has(line.id);
+                            const busy = pendingLineToggle === `${member.id}:${line.id}`;
+                            return (
+                              <button
+                                key={line.id}
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleToggleLineAccess(member, line.id)}
+                                className={
+                                  active
+                                    ? 'rounded-full border border-primary/60 bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary disabled:opacity-60'
+                                    : 'rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-60'
+                                }
+                              >
+                                {line.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </li>
+                    );
+                  })}
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <InviteMemberDialog
         open={inviteOpen}

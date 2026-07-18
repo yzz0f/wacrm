@@ -1290,6 +1290,8 @@
     "members": {
       "title": "Miembros del equipo",
       "description": "Personas con acceso a esta cuenta. Los roles controlan lo que puede hacer cada compañero de equipo.",
+      "lineAccessTitle": "Acceso por línea",
+      "lineAccessDesc": "Restringe qué líneas de WhatsApp puede ver cada agente/espectador. Los propietarios y administradores siempre ven todas las líneas, y un miembro sin ninguna línea seleccionada aquí no ve ninguna.",
       "inviteMember": "Invitar miembro",
       "online": "en línea",
       "away": "ausente",

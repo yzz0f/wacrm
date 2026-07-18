@@ -1290,6 +1290,8 @@
     "members": {
       "title": "Team members",
       "description": "People with access to this account. Roles control what each teammate can do.",
+      "lineAccessTitle": "Line access",
+      "lineAccessDesc": "Restrict which WhatsApp lines each agent/viewer can see. Owners and admins always see every line, and a member with no lines selected here sees none.",
       "inviteMember": "Invite member",
       "online": "online",
       "away": "away",
