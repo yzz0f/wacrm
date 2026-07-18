@@ -59,7 +59,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
 
-  const { name, description, trigger_type, trigger_config, is_active, steps, template } = body
+  const { name, description, trigger_type, trigger_config, is_active, steps, template, line_id } = body
 
   let effectiveSteps: BuilderStepInput[] | undefined = steps
   let effectiveName = name
@@ -114,6 +114,10 @@ export async function POST(request: Request) {
       description: effectiveDescription ?? null,
       trigger_type: effectiveTriggerType,
       trigger_config: effectiveTriggerConfig ?? {},
+      // Optional — restricts the trigger to one line. NULL (the
+      // default) means "any line", matching every automation's
+      // behaviour before multi-line existed.
+      line_id: typeof line_id === 'string' ? line_id : null,
       is_active: !!is_active,
     })
     .select()

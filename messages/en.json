@@ -945,6 +945,8 @@
       },
       "trigger": "Trigger",
       "triggerType": "Trigger type",
+      "lineLabel": "Line",
+      "lineAll": "All lines",
       "keywords": "Keywords",
       "keywordsHint": "Comma-separated list (e.g. hello, help, buy)",
       "replyIds": "Reply IDs",
@@ -1109,6 +1111,8 @@
     "builder": {
       "triggerTitle": "Trigger",
       "whenLabel": "When…",
+      "lineLabel": "Line",
+      "lineAll": "All lines",
       "triggerKeywordTitle": "A message contains a keyword",
       "triggerFirstInboundTitle": "Customer's first ever inbound message",
       "triggerManualTitle": "Manual only (no auto-trigger)",

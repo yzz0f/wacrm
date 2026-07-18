@@ -236,6 +236,8 @@ export interface FlowRow {
   status: "draft" | "active" | "archived";
   trigger_type: "keyword" | "first_inbound_message" | "manual";
   trigger_config: KeywordTriggerConfig | FirstInboundTriggerConfig | Record<string, unknown>;
+  /** Restricts the trigger to one line. null = any line (default). */
+  line_id: string | null;
   entry_node_id: string | null;
   fallback_policy: FlowFallbackPolicy;
   execution_count: number;

@@ -63,6 +63,8 @@ export interface BuilderState {
   description: string;
   trigger_type: "keyword" | "first_inbound_message" | "manual";
   trigger_config: Record<string, unknown>;
+  /** Restricts the trigger to one line. null = any line (default). */
+  line_id: string | null;
   entry_node_id: string | null;
   status: FlowRow["status"];
   nodes: BuilderNode[];
@@ -245,6 +247,7 @@ export function FlowEditorProvider({
     description: initialFlow.description ?? "",
     trigger_type: initialFlow.trigger_type,
     trigger_config: initialFlow.trigger_config as Record<string, unknown>,
+    line_id: initialFlow.line_id ?? null,
     entry_node_id: initialFlow.entry_node_id,
     status: initialFlow.status,
     nodes: initialNodes.map((n) => ({
@@ -340,6 +343,7 @@ export function FlowEditorProvider({
           description: state.description || null,
           trigger_type: state.trigger_type,
           trigger_config: state.trigger_config,
+          line_id: state.line_id,
           entry_node_id: state.entry_node_id,
           nodes: state.nodes,
         }),

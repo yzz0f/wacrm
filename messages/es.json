@@ -945,6 +945,8 @@
       },
       "trigger": "Disparador",
       "triggerType": "Tipo de disparador",
+      "lineLabel": "Línea",
+      "lineAll": "Todas las líneas",
       "keywords": "Palabras clave",
       "keywordsHint": "Lista separada por comas (p. ej. hola, ayuda, comprar)",
       "replyIds": "IDs de respuesta",
@@ -1109,6 +1111,8 @@
     "builder": {
       "triggerTitle": "Disparador",
       "whenLabel": "Cuando…",
+      "lineLabel": "Línea",
+      "lineAll": "Todas las líneas",
       "triggerKeywordTitle": "Un mensaje contiene una palabra clave",
       "triggerFirstInboundTitle": "Primer mensaje entrante del cliente",
       "triggerManualTitle": "Solo manual (sin activación automática)",

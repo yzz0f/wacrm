@@ -62,6 +62,7 @@ import {
 } from "@/components/interactive/interactive-builder"
 import { interactivePayloadPreviewText } from "@/lib/whatsapp/interactive"
 import { createClient } from "@/lib/supabase/client"
+import { useAuth } from "@/hooks/use-auth"
 import { cn } from "@/lib/utils"
 
 // ------------------------------------------------------------
@@ -82,6 +83,8 @@ export interface BuilderInitial {
   description: string
   trigger_type: AutomationTriggerType
   trigger_config: Record<string, unknown>
+  /** Restricts the trigger to one line. null = any line (default). */
+  line_id: string | null
   is_active: boolean
   steps: BuilderStep[]
 }
@@ -668,6 +671,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         description: state.description || null,
         trigger_type: state.trigger_type,
         trigger_config: state.trigger_config,
+        line_id: state.line_id,
         is_active: state.is_active,
         steps: toApiSteps(state.steps),
       }
@@ -755,8 +759,10 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
             <TriggerCard
               type={state.trigger_type}
               config={state.trigger_config}
+              lineId={state.line_id}
               onTypeChange={(tVal) => patchTop("trigger_type", tVal)}
               onConfigChange={(c) => patchTop("trigger_config", c)}
+              onLineIdChange={(l) => patchTop("line_id", l)}
               t={t}
             />
             <StepList
@@ -783,16 +789,21 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
 function TriggerCard({
   type,
   config,
+  lineId,
   onTypeChange,
   onConfigChange,
+  onLineIdChange,
   t,
 }: {
   type: AutomationTriggerType
   config: Record<string, unknown>
+  lineId: string | null
   onTypeChange: (t: AutomationTriggerType) => void
   onConfigChange: (c: Record<string, unknown>) => void
+  onLineIdChange: (lineId: string | null) => void
   t: ReturnType<typeof useTranslations>
 }) {
+  const { lines } = useAuth()
   const [open, setOpen] = useState(false)
   return (
     // Card width: full on mobile, fixed 320px on sm+. The canvas wrapper
@@ -838,6 +849,29 @@ function TriggerCard({
                 {t(`triggers.${type}.hint`)}
               </p>
             </div>
+            {/* Line restriction — only meaningful once there's more
+                than one to choose between. Defaults to "any line",
+                matching every automation's behaviour before
+                multi-line existed. */}
+            {lines.length > 1 && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  {t("lineLabel")}
+                </label>
+                <select
+                  value={lineId ?? ""}
+                  onChange={(e) => onLineIdChange(e.target.value || null)}
+                  className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none"
+                >
+                  <option value="">{t("lineAll")}</option>
+                  {lines.map((line) => (
+                    <option key={line.id} value={line.id}>
+                      {line.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {type === "keyword_match" && (
               <KeywordMatchConfig
                 config={config as unknown as KeywordMatchTriggerConfig}
