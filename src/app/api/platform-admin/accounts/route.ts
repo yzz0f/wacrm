@@ -18,7 +18,7 @@ export async function GET() {
 
     const { data: accounts, error: accountsErr } = await admin
       .from('accounts')
-      .select('id, name, owner_user_id, status, deletion_requested_at, created_at')
+      .select('id, name, owner_user_id, status, billing_status, deletion_requested_at, created_at')
       .order('created_at', { ascending: false })
     if (accountsErr) {
       console.error('[platform-admin/accounts] accounts fetch error:', accountsErr)
@@ -30,9 +30,12 @@ export async function GET() {
 
     const accountIds = accounts.map((a) => a.id)
 
-    const [{ data: memberCounts }, { data: configCounts }] = await Promise.all([
+    const [{ data: memberCounts }, { data: lineRows }] = await Promise.all([
       admin.from('profiles').select('account_id').in('account_id', accountIds),
-      admin.from('whatsapp_config').select('account_id').in('account_id', accountIds),
+      // whatsapp_config was dropped in 038_whatsapp_lines_finalize.sql —
+      // this was still querying it (a stale reference from before that
+      // migration and this route's migration merged into the same base).
+      admin.from('whatsapp_lines').select('account_id').in('account_id', accountIds),
     ])
 
     const memberCountByAccount = new Map<string, number>()
@@ -40,7 +43,7 @@ export async function GET() {
       const key = row.account_id as string
       memberCountByAccount.set(key, (memberCountByAccount.get(key) ?? 0) + 1)
     }
-    const hasWhatsappByAccount = new Set((configCounts ?? []).map((r) => r.account_id as string))
+    const hasWhatsappByAccount = new Set((lineRows ?? []).map((r) => r.account_id as string))
 
     // Owner emails — one bulk admin call rather than N.
     const ownerIds = new Set(accounts.map((a) => a.owner_user_id))
@@ -64,6 +67,7 @@ export async function GET() {
       name: a.name,
       ownerEmail: ownerEmailById.get(a.owner_user_id) ?? null,
       status: a.status,
+      billingStatus: a.billing_status,
       deletionRequestedAt: a.deletion_requested_at,
       memberCount: memberCountByAccount.get(a.id) ?? 0,
       hasWhatsappLine: hasWhatsappByAccount.has(a.id),

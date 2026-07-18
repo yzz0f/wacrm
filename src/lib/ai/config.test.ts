@@ -8,14 +8,24 @@ vi.mock('@/lib/whatsapp/encryption', () => ({
 
 import { loadAiConfig } from './config'
 
-function dbReturning(row: Record<string, unknown> | null): SupabaseClient {
-  const chain = {
-    from: () => chain,
-    select: () => chain,
-    eq: () => chain,
-    maybeSingle: () => Promise.resolve({ data: row, error: null }),
+// Table-aware: ai_configs returns `row`; account_subscriptions/plans
+// return null by default (no subscription row = billing not set up
+// on this install = never gates AI access), unless overridden.
+function dbReturning(
+  row: Record<string, unknown> | null,
+  opts: { subscription?: Record<string, unknown> | null; plan?: Record<string, unknown> | null } = {},
+): SupabaseClient {
+  const { subscription = null, plan = null } = opts
+  const from = (table: string) => {
+    const data = table === 'ai_configs' ? row : table === 'account_subscriptions' ? subscription : plan
+    const chain = {
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: () => Promise.resolve({ data, error: null }),
+    }
+    return chain
   }
-  return chain as unknown as SupabaseClient
+  return { from } as unknown as SupabaseClient
 }
 
 const ROW = {
@@ -47,5 +57,31 @@ describe('loadAiConfig requireActive', () => {
     expect(
       await loadAiConfig(dbReturning(null), 'acct', { requireActive: false }),
     ).toBeNull()
+  })
+})
+
+describe('loadAiConfig plan gate', () => {
+  it('returns null when the account plan has ai_enabled = false', async () => {
+    const db = dbReturning(ROW, {
+      subscription: { plan_id: 'plan-1' },
+      plan: { ai_enabled: false },
+    })
+    expect(await loadAiConfig(db, 'acct', { requireActive: false })).toBeNull()
+  })
+
+  it('returns the config when the plan has ai_enabled = true', async () => {
+    const db = dbReturning(ROW, {
+      subscription: { plan_id: 'plan-1' },
+      plan: { ai_enabled: true },
+    })
+    const config = await loadAiConfig(db, 'acct', { requireActive: false })
+    expect(config).not.toBeNull()
+  })
+
+  it('never gates when there is no subscription row (billing not set up)', async () => {
+    const config = await loadAiConfig(dbReturning(ROW), 'acct', {
+      requireActive: false,
+    })
+    expect(config).not.toBeNull()
   })
 })

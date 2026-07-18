@@ -21,7 +21,7 @@ export async function GET(
 
     const { data: account, error: accountErr } = await admin
       .from('accounts')
-      .select('id, name, owner_user_id, status, deletion_requested_at, created_at, updated_at')
+      .select('id, name, owner_user_id, status, billing_status, deletion_requested_at, created_at, updated_at')
       .eq('id', id)
       .maybeSingle()
     if (accountErr) {
@@ -36,18 +36,21 @@ export async function GET(
 
     const [
       { data: ownerUser },
-      { data: whatsappConfig },
+      { data: whatsappLines },
       { count: memberCount },
       { count: conversationCount },
       { count: messageCount30d },
       { data: impersonationHistory },
+      { data: subscription },
     ] = await Promise.all([
       admin.auth.admin.getUserById(account.owner_user_id),
+      // whatsapp_config was dropped in 038_whatsapp_lines_finalize.sql —
+      // an account can now have more than one line, so this is a list,
+      // not a maybeSingle().
       admin
-        .from('whatsapp_config')
-        .select('id, phone_number_id, waba_id, status, registered_at')
-        .eq('account_id', id)
-        .maybeSingle(),
+        .from('whatsapp_lines')
+        .select('id, name, phone_number_id, waba_id, status, registered_at')
+        .eq('account_id', id),
       admin
         .from('profiles')
         .select('id', { count: 'exact', head: true })
@@ -67,7 +70,20 @@ export async function GET(
         .eq('target_account_id', id)
         .order('started_at', { ascending: false })
         .limit(20),
+      admin
+        .from('account_subscriptions')
+        .select('plan_id, trial_ends_at, current_period_end')
+        .eq('account_id', id)
+        .maybeSingle(),
     ])
+
+    // Plan name — a separate point lookup rather than an embedded join,
+    // same schema-cache caution as the rest of the billing feature.
+    let planName: string | null = null
+    if (subscription?.plan_id) {
+      const { data: plan } = await admin.from('plans').select('name').eq('id', subscription.plan_id).maybeSingle()
+      planName = plan?.name ?? null
+    }
 
     return NextResponse.json({
       account: {
@@ -75,11 +91,19 @@ export async function GET(
         name: account.name,
         ownerEmail: ownerUser?.user?.email ?? null,
         status: account.status,
+        billingStatus: account.billing_status,
         deletionRequestedAt: account.deletion_requested_at,
         createdAt: account.created_at,
         updatedAt: account.updated_at,
       },
-      whatsappConfig: whatsappConfig ?? null,
+      whatsappLines: whatsappLines ?? [],
+      billing: subscription
+        ? {
+            planName,
+            trialEndsAt: subscription.trial_ends_at,
+            currentPeriodEnd: subscription.current_period_end,
+          }
+        : null,
       metrics: {
         memberCount: memberCount ?? 0,
         conversationCount: conversationCount ?? 0,

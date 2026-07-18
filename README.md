@@ -33,7 +33,7 @@ clone or fork it to run your own CRM.
 - **No-code automations** — triggers on inbound messages, new
   contacts, keywords, or schedule; conditional branches, waits,
   tags, webhooks. Visual builder.
-- **AI reply assistant** — bring your own OpenAI or Anthropic key
+- **AI reply assistant** — bring your own OpenAI, Anthropic, or Gemini key
   (stored encrypted; no per-seat AI fee, your data stays yours).
   One-click AI-drafted replies in the inbox, plus an optional
   auto-reply bot with a per-conversation cap and clean human handoff.
@@ -177,6 +177,40 @@ To turn it on:
 3. Optionally schedule `GET /api/platform-admin/cron/purge-pending-deletions`
    (daily) with `PLATFORM_ADMIN_CRON_SECRET` set, to hard-delete
    accounts 30+ days past a requested deletion.
+
+## Billing and plans (optional)
+
+Builds on the platform admin panel above — skip this too if you
+self-host for one team, or if you're running the admin panel without
+charging for access.
+
+Adds real recurring billing: fixed-tier plans (Pro/Business, seeded
+in a migration — no plan-creation UI in v1), a 14-day trial, and
+self-serve checkout via [MercadoPago](https://www.mercadopago.com)
+(chosen because Stripe doesn't yet support Chile as a seller
+country — see `docs/superpowers/specs/2026-07-18-billing-plans-design.md`
+for the full reasoning). The payment provider sits behind a
+`BillingProvider` interface (`src/lib/billing/providers/`), so
+swapping providers later doesn't touch the rest of the system.
+
+A cron keeps `accounts.status` (suspend/reactivate, shared with the
+platform admin panel) in sync with payment state — an expired trial
+or a failed payment auto-suspends an account after a grace period,
+distinct from a manual suspension the super-admin panel can still do
+independently.
+
+To turn it on:
+
+1. Set `MERCADOPAGO_ACCESS_TOKEN` and `MERCADOPAGO_WEBHOOK_SECRET`
+   (see `.env.local.example`) from your MercadoPago developer panel.
+2. Point MercadoPago's webhook configuration at
+   `POST /api/billing/webhook`.
+3. Schedule `GET /api/billing/cron/check-trials` (daily) with
+   `BILLING_CRON_SECRET` set — a safety net if a webhook delivery is
+   ever missed.
+4. Update the seeded plan prices in `plans` (migration
+   `041_billing_plans.sql` inserts placeholder `0` CLP prices) once
+   you've decided real pricing.
 
 ## Stack
 

@@ -14,10 +14,12 @@ interface AccountDetail {
     name: string;
     ownerEmail: string | null;
     status: 'active' | 'suspended' | 'pending_deletion';
+    billingStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | null;
     deletionRequestedAt: string | null;
     createdAt: string;
   };
-  whatsappConfig: { phone_number_id: string; status: string; registered_at: string | null } | null;
+  whatsappLines: { id: string; name: string; phone_number_id: string; status: string; registered_at: string | null }[];
+  billing: { planName: string | null; trialEndsAt: string | null; currentPeriodEnd: string | null } | null;
   metrics: { memberCount: number; conversationCount: number; messageCount30d: number };
   impersonationHistory: {
     id: string;
@@ -32,6 +34,13 @@ const STATUS_VARIANT: Record<AccountDetail['account']['status'], 'default' | 'de
   active: 'default',
   suspended: 'destructive',
   pending_deletion: 'secondary',
+};
+
+const BILLING_STATUS_VARIANT: Record<string, 'default' | 'destructive' | 'secondary'> = {
+  trialing: 'secondary',
+  active: 'default',
+  past_due: 'destructive',
+  canceled: 'destructive',
 };
 
 export function AccountDetailClient({ accountId }: { accountId: string }) {
@@ -93,7 +102,7 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
     return <div className="text-sm text-muted-foreground">Loading…</div>;
   }
 
-  const { account, whatsappConfig, metrics, impersonationHistory } = detail;
+  const { account, whatsappLines, billing, metrics, impersonationHistory } = detail;
 
   return (
     <div className="flex flex-col gap-6">
@@ -118,6 +127,9 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-semibold text-foreground">{account.name}</h1>
             <Badge variant={STATUS_VARIANT[account.status]}>{account.status}</Badge>
+            {account.billingStatus && (
+              <Badge variant={BILLING_STATUS_VARIANT[account.billingStatus]}>{account.billingStatus}</Badge>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">{account.ownerEmail ?? '—'}</p>
         </div>
@@ -152,14 +164,19 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
         <MetricCard label="Members" value={metrics.memberCount} />
         <MetricCard label="Conversations" value={metrics.conversationCount} />
         <MetricCard label="Messages (30d)" value={metrics.messageCount30d} />
         <MetricCard
-          label="WhatsApp"
-          value={whatsappConfig ? (whatsappConfig.registered_at ? 'Registered' : 'Pending') : 'Not connected'}
+          label="WhatsApp lines"
+          value={
+            whatsappLines.length === 0
+              ? 'None connected'
+              : `${whatsappLines.length} (${whatsappLines.filter((l) => l.registered_at).length} registered)`
+          }
         />
+        <MetricCard label="Plan" value={billing?.planName ?? 'No plan'} />
       </div>
 
       <Card>
