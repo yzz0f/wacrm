@@ -1,5 +1,5 @@
 -- ============================================================
--- 037_platform_admin.sql — Platform super-admin panel (foundation)
+-- 039_platform_admin.sql — Platform super-admin panel (foundation)
 --
 -- Adds the schema for an internal super-admin panel that can list
 -- every account on the instance, suspend/reactivate/delete them, and
