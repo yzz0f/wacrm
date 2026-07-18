@@ -14,6 +14,7 @@ interface AccountRow {
   name: string;
   ownerEmail: string | null;
   status: 'active' | 'suspended' | 'pending_deletion';
+  billingStatus: 'trialing' | 'active' | 'past_due' | 'canceled' | null;
   memberCount: number;
   hasWhatsappLine: boolean;
   createdAt: string;
@@ -23,6 +24,13 @@ const STATUS_VARIANT: Record<AccountRow['status'], 'default' | 'destructive' | '
   active: 'default',
   suspended: 'destructive',
   pending_deletion: 'secondary',
+};
+
+const BILLING_STATUS_VARIANT: Record<string, 'default' | 'destructive' | 'secondary'> = {
+  trialing: 'secondary',
+  active: 'default',
+  past_due: 'destructive',
+  canceled: 'destructive',
 };
 
 export function AccountsListClient() {
@@ -85,6 +93,9 @@ export function AccountsListClient() {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
+                    {a.billingStatus && (
+                      <Badge variant={BILLING_STATUS_VARIANT[a.billingStatus]}>{a.billingStatus}</Badge>
+                    )}
                     <Badge variant={STATUS_VARIANT[a.status]}>{a.status}</Badge>
                     <Link
                       href={`/platform-admin/accounts/${a.id}`}

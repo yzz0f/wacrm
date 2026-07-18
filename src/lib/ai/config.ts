@@ -52,6 +52,26 @@ export async function loadAiConfig(
   // rather than letting decrypt() throw on null.
   if (!row.api_key) return null
 
+  // Plan gate: an account whose plan doesn't include AI behaves as
+  // "not configured" even with a saved, active key — same outcome as
+  // is_active being off, so callers don't need a separate branch.
+  // No subscription row (billing not set up on this install) or no
+  // matching plan never blocks — this only restricts when a plan
+  // explicitly says ai_enabled = false.
+  const { data: sub } = await db
+    .from('account_subscriptions')
+    .select('plan_id')
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (sub) {
+    const { data: plan } = await db
+      .from('plans')
+      .select('ai_enabled')
+      .eq('id', sub.plan_id)
+      .maybeSingle()
+    if (plan && !plan.ai_enabled) return null
+  }
+
   // The embeddings key is optional and independent of the chat key —
   // a corrupt/undecryptable one should downgrade to lexical KB, not
   // take down draft/auto-reply, so decrypt failures are swallowed here.
