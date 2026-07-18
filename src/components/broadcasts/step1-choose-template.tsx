@@ -6,6 +6,14 @@ import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Loader2, FileText, ArrowRight } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useAuth } from '@/hooks/use-auth';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const categoryColors: Record<string, string> = {
   Marketing: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -16,27 +24,48 @@ const categoryColors: Record<string, string> = {
 interface Step1Props {
   selectedTemplate: MessageTemplate | null;
   onSelect: (template: MessageTemplate) => void;
+  lineId: string | null;
+  onLineChange: (lineId: string) => void;
   onNext: () => void;
   onBack: () => void;
 }
 
-export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack }: Step1Props) {
+export function Step1ChooseTemplate({
+  selectedTemplate,
+  onSelect,
+  lineId,
+  onLineChange,
+  onNext,
+  onBack,
+}: Step1Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const { lines } = useAuth();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Line hasn't resolved yet (still loading from useAuth, or the
+    // account genuinely has none) — nothing to scope the query to.
+    if (!lineId) {
+      setTemplates([]);
+      setLoading(false);
+      return;
+    }
+
     async function fetchTemplates() {
       try {
         const supabase = createClient();
         // Only APPROVED templates can be sent via Meta — anything else
         // would 400 at broadcast time. Hide them rather than letting
-        // the user pick a template that will fail.
+        // the user pick a template that will fail. Scoped to the
+        // chosen line — templates are WABA-specific, so a different
+        // line's approved templates aren't sendable from this one.
         const { data, error: fetchError } = await supabase
           .from('message_templates')
           .select('*')
           .eq('status', 'APPROVED')
+          .eq('line_id', lineId)
           .order('created_at', { ascending: false });
 
         if (fetchError) throw fetchError;
@@ -48,8 +77,9 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
       }
     }
 
+    setLoading(true);
     fetchTemplates();
-  }, []);
+  }, [lineId, t]);
 
   if (loading) {
     return (
@@ -75,6 +105,29 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
           {t('chooseTemplate.subtitle')}
         </p>
       </div>
+
+      {/* Line selector — only shown once there's a real choice to
+          make. A single-line account has this pre-selected and never
+          sees the control. */}
+      {lines.length > 1 && (
+        <div className="max-w-xs space-y-2">
+          <label className="text-sm font-medium text-foreground">
+            {t('chooseTemplate.lineLabel')}
+          </label>
+          <Select value={lineId ?? undefined} onValueChange={(v) => v && onLineChange(v)}>
+            <SelectTrigger className="border-border bg-muted text-foreground">
+              <SelectValue placeholder={t('chooseTemplate.linePlaceholder')} />
+            </SelectTrigger>
+            <SelectContent>
+              {lines.map((line) => (
+                <SelectItem key={line.id} value={line.id}>
+                  {line.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {templates.length === 0 ? (
         <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-border bg-card/50">

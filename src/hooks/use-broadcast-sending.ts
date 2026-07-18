@@ -46,6 +46,9 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
+  /** Which WhatsApp line to send from. Falls back to the account's
+   *  default line when omitted — the common single-line case. */
+  lineId?: string | null;
 }
 
 interface UseBroadcastSendingReturn {
@@ -358,6 +361,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .insert({
           user_id: user.id,
           account_id: accountId,
+          line_id: payload.lineId ?? null,
           name: payload.name,
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',
@@ -481,6 +485,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               recipients: apiRecipients,
               template_name: payload.template.name,
               template_language: payload.template.language ?? 'en_US',
+              line_id: payload.lineId ?? null,
             }),
           });
 

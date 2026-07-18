@@ -749,6 +749,8 @@
       "chooseTemplate": {
         "title": "Elige una plantilla",
         "subtitle": "Selecciona una plantilla de mensaje aprobada para tu difusión.",
+        "lineLabel": "Enviar desde",
+        "linePlaceholder": "Selecciona una línea…",
         "noTemplates": "No hay plantillas disponibles.",
         "createFirst": "Primero crea una plantilla en Configuración.",
         "errorLoad": "Error al cargar las plantillas"

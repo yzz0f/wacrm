@@ -749,6 +749,8 @@
       "chooseTemplate": {
         "title": "Choose a Template",
         "subtitle": "Select an approved message template for your broadcast.",
+        "lineLabel": "Send from",
+        "linePlaceholder": "Select a line…",
         "noTemplates": "No templates available.",
         "createFirst": "Create a template in Settings first.",
         "errorLoad": "Failed to load templates"
