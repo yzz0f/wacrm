@@ -16,6 +16,36 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+/**
+ * Resolve the WhatsApp line to send on from the conversation itself —
+ * a flow always replies through the same number the triggering
+ * message came in on. Falls back to the account's default line if
+ * the conversation predates line_id (should not happen post-Fase-10,
+ * but keeps sends working during the rollout window).
+ */
+async function resolveLineForConversation(
+  db: SupabaseClient,
+  accountId: string,
+  conversationId: string,
+) {
+  const { data: conversation } = await db
+    .from('conversations')
+    .select('line_id')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+
+  const lineQuery = conversation?.line_id
+    ? db.from('whatsapp_lines').select('*').eq('id', conversation.line_id)
+    : db
+        .from('whatsapp_lines')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('is_default', true)
+  return lineQuery.single()
+}
 
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
@@ -33,9 +63,10 @@ import { supabaseAdmin } from './admin-client'
 // ------------------------------------------------------------
 
 interface SendTextEngineArgs {
-  /** Account-level tenancy key. Drives contact + whatsapp_config
-   *  lookups so a flow authored by user A still sends through the
-   *  WhatsApp number user B saved on the same account. */
+  /** Account-level tenancy key. Drives the contact lookup; the
+   *  WhatsApp line itself is resolved from the conversation's
+   *  line_id via resolveLineForConversation(), not from this field
+   *  directly. */
   accountId: string
   /** Original author of the flow — used for INSERT audit columns
    *  and for resolving the agent's identity in logs. Not consulted
@@ -82,11 +113,11 @@ export async function engineSendText(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
+  const { data: config, error: configErr } = await resolveLineForConversation(
+    db,
+    args.accountId,
+    args.conversationId,
+  )
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }
@@ -192,11 +223,11 @@ export async function engineSendMedia(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
+  const { data: config, error: configErr } = await resolveLineForConversation(
+    db,
+    args.accountId,
+    args.conversationId,
+  )
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }
@@ -326,9 +357,10 @@ async function sendInteractiveViaMeta(
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
 
-  // Scope the contact + whatsapp_config lookups by account_id —
-  // same defense-in-depth rationale as automations/meta-send.ts.
-  // Migration 017 moved both tables to account-scoped tenancy.
+  // Scope the contact lookup by account_id — same defense-in-depth
+  // rationale as automations/meta-send.ts. The line is resolved from
+  // the conversation via resolveLineForConversation(), not accountId
+  // directly (an account can have more than one line since Fase 1).
   const { data: contact, error: contactErr } = await db
     .from('contacts')
     .select('id, phone')
@@ -344,11 +376,11 @@ async function sendInteractiveViaMeta(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
+  const { data: config, error: configErr } = await resolveLineForConversation(
+    db,
+    input.accountId,
+    input.conversationId,
+  )
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }

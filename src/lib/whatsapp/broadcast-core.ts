@@ -54,6 +54,9 @@ export interface CreateBroadcastParams {
   templateName: string;
   templateLanguage?: string | null;
   recipients: BroadcastRecipientInput[];
+  /** Which WhatsApp line to send from. Falls back to the account's
+   *  default line when omitted — most accounts still have just one. */
+  lineId?: string | null;
 }
 
 interface PlannedRecipient {
@@ -88,7 +91,7 @@ export async function createBroadcast(
   auditUserId: string,
   params: CreateBroadcastParams
 ): Promise<BroadcastPlan> {
-  const { name, templateName, recipients } = params;
+  const { name, templateName, recipients, lineId } = params;
   const templateLanguage = params.templateLanguage || 'en_US';
 
   if (!templateName) {
@@ -109,13 +112,18 @@ export async function createBroadcast(
     );
   }
 
-  // Config (fail fast + provides the audit trail owner already resolved
+  // Line (fail fast + provides the audit trail owner already resolved
   // by the caller). Meta send needs phone_number_id + decrypted token.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
+  // Falls back to the account's default line when the caller doesn't
+  // pick one — most accounts still have just one.
+  const lineQuery = lineId
+    ? db.from('whatsapp_lines').select('*').eq('id', lineId).eq('account_id', accountId)
+    : db
+        .from('whatsapp_lines')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('is_default', true);
+  const { data: config, error: configError } = await lineQuery.single();
   if (configError || !config) {
     throw new BroadcastError(
       'whatsapp_not_configured',
@@ -131,6 +139,7 @@ export async function createBroadcast(
     .from('message_templates')
     .select('*')
     .eq('account_id', accountId)
+    .eq('line_id', config.id)
     .eq('name', templateName)
     .eq('language', templateLanguage)
     .maybeSingle();
@@ -198,6 +207,7 @@ export async function createBroadcast(
     .insert({
       account_id: accountId,
       user_id: auditUserId,
+      line_id: config.id,
       name: name || `API broadcast (${templateName})`,
       template_name: templateName,
       template_language: templateLanguage,

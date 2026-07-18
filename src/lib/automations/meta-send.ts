@@ -25,9 +25,9 @@ import { supabaseAdmin } from './admin-client'
 // ------------------------------------------------------------
 
 interface SendTextArgs {
-  /** Account-level tenancy key. Drives contact + whatsapp_config
-   *  lookups so an automation authored by user A still sends through
-   *  the WhatsApp number user B saved on the same account. */
+  /** Account-level tenancy key. Drives the contact lookup; the
+   *  WhatsApp line itself is resolved from the conversation's
+   *  line_id, not from this field directly. */
   accountId: string
   /** Original author of the automation/flow — used for INSERT audit
    *  columns (messages.sender_id-ish) and for resolving the agent's
@@ -131,11 +131,24 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
+  // Resolve the line to reply on from the conversation itself — an
+  // automation always replies through the same number the triggering
+  // message came in on, never a different line of the same account.
+  const { data: conversation } = await db
+    .from('conversations')
+    .select('line_id')
+    .eq('id', input.conversationId)
     .eq('account_id', input.accountId)
-    .single()
+    .maybeSingle()
+
+  const lineQuery = conversation?.line_id
+    ? db.from('whatsapp_lines').select('*').eq('id', conversation.line_id)
+    : db
+        .from('whatsapp_lines')
+        .select('*')
+        .eq('account_id', input.accountId)
+        .eq('is_default', true)
+  const { data: config, error: configErr } = await lineQuery.single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
   }

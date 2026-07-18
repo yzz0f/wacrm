@@ -247,12 +247,19 @@ export async function sendMessageToConversation(
     );
   }
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
+  // WhatsApp line — the specific number this conversation belongs to,
+  // not just "the account's config". A conversation created before
+  // Fase 10's NOT NULL lands could still have a null line_id; fall
+  // back to the account's default line so sending never regresses
+  // mid-rollout.
+  const lineQuery = conversation.line_id
+    ? db.from('whatsapp_lines').select('*').eq('id', conversation.line_id)
+    : db
+        .from('whatsapp_lines')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('is_default', true);
+  const { data: config, error: configError } = await lineQuery.single();
 
   if (configError || !config) {
     throw new SendMessageError(
@@ -267,7 +274,7 @@ export async function sendMessageToConversation(
   // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
   if (isLegacyFormat(config.access_token)) {
     void db
-      .from('whatsapp_config')
+      .from('whatsapp_lines')
       .update({ access_token: encrypt(accessToken) })
       .eq('id', config.id)
       .then(({ error }: { error: { message: string } | null }) => {
@@ -316,6 +323,7 @@ export async function sendMessageToConversation(
       .from('message_templates')
       .select('*')
       .eq('account_id', accountId)
+      .eq('line_id', config.id)
       .eq('name', templateName)
       .eq('language', templateLanguage || 'en_US')
       .maybeSingle();
