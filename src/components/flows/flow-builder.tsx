@@ -47,6 +47,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/use-auth';
 import { type ValidationIssue } from '@/lib/flows/validate';
 import {
   NODE_META,
@@ -272,6 +273,7 @@ function TriggerPanel({
   triggerIssues: ValidationIssue[];
   t: ReturnType<typeof useTranslations>;
 }) {
+  const { lines } = useAuth();
   return (
     <section className="border-border bg-card rounded-lg border p-4">
       <h2 className="text-foreground mb-3 text-sm font-semibold">{t('triggerTitle')}</h2>
@@ -326,6 +328,37 @@ function TriggerPanel({
               }
               t={t}
             />
+          </div>
+        )}
+        {/* Line restriction — only meaningful once there's more than
+            one to choose between. Defaults to "any line", matching
+            every flow's behaviour before multi-line existed. */}
+        {lines.length > 1 && (
+          <div>
+            <label className="text-muted-foreground mb-1 block text-xs">
+              {t('lineLabel')}
+            </label>
+            <Select
+              value={state.line_id ?? '__all__'}
+              onValueChange={(v) =>
+                setState((s) => ({
+                  ...s,
+                  line_id: v === '__all__' ? null : v,
+                }))
+              }
+            >
+              <SelectTrigger className="bg-muted">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">{t('lineAll')}</SelectItem>
+                {lines.map((line) => (
+                  <SelectItem key={line.id} value={line.id}>
+                    {line.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         )}
       </div>

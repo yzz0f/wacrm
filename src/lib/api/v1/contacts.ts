@@ -65,18 +65,22 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
  * broadcasts, resolve-conversation), so the same key's writes are
  * always attributed to the same human. API callers have no logged-in
  * user, so — like the inbound webhook — we attribute writes to the
- * **WhatsApp config owner** (the webhook's own convention). Contacts
- * can be created before WhatsApp is connected, so we fall back to the
- * account owner when there's no config yet.
+ * **default WhatsApp line's owner** (the webhook's own convention,
+ * extended to multi-line: an account can have several lines, each
+ * with its own owner, so we pin this to the default one for a
+ * stable, single answer). Contacts can be created before WhatsApp is
+ * connected, so we fall back to the account owner when there's no
+ * line yet.
  */
 export async function resolveAuditUserId(
   db: SupabaseClient,
   accountId: string
 ): Promise<string> {
   const { data: config } = await db
-    .from('whatsapp_config')
+    .from('whatsapp_lines')
     .select('user_id')
     .eq('account_id', accountId)
+    .eq('is_default', true)
     .maybeSingle();
   const configOwner = config?.user_id as string | undefined;
   if (configOwner) return configOwner;

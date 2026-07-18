@@ -40,6 +40,7 @@ export default function EditAutomationPage({
         description: body.automation.description ?? "",
         trigger_type: body.automation.trigger_type as AutomationTriggerType,
         trigger_config: body.automation.trigger_config ?? {},
+        line_id: body.automation.line_id ?? null,
         is_active: !!body.automation.is_active,
         steps: fromServerSteps((body.steps ?? []) as ServerStepNode[]),
       })

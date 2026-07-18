@@ -20,6 +20,7 @@ import {
   isAccountRole,
   type AccountRole,
 } from "@/lib/auth/roles";
+import type { WhatsAppLine } from "@/types";
 
 interface Profile {
   id: string;
@@ -84,6 +85,15 @@ interface AuthContextValue {
   accountRole: AccountRole | null;
   /** Lightweight account meta — id + name + default_currency. Null while loading. */
   account: AccountSummary | null;
+  /** Every WhatsApp line on the account (RLS scopes this to the
+   *  account itself, not per-line — line_access only restricts
+   *  conversations/messages, not the line list). Empty while loading. */
+  lines: WhatsAppLine[];
+  /** True once `lines` has resolved and the account has exactly one
+   *  line — the common case, used to hide all line-related UI
+   *  (inbox filter, badges, broadcast/automation selectors) when
+   *  there's nothing to choose between. False while loading. */
+  hasSingleLine: boolean;
   /** Account default deal currency. Falls back to DEFAULT_CURRENCY
    *  while loading or when no account is resolved, so callers can use
    *  it unconditionally. */
@@ -115,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [lines, setLines] = useState<WhatsAppLine[]>([]);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
@@ -188,6 +199,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
             };
           }
+
+          // Lines — every consumer that needs to know "does this
+          // account have more than one WhatsApp number" (inbox filter,
+          // broadcast/automation line pickers) reads this instead of
+          // each re-fetching it independently.
+          const { data: lineRows, error: linesErr } = await supabase
+            .from("whatsapp_lines")
+            .select("*")
+            .eq("account_id", data.account_id)
+            .order("is_default", { ascending: false })
+            .order("created_at", { ascending: true });
+          if (linesErr) {
+            console.error("[AuthProvider] fetchLines error:", {
+              message: linesErr.message,
+              details: linesErr.details,
+              hint: linesErr.hint,
+              code: linesErr.code,
+            });
+            setLines([]);
+          } else {
+            setLines((lineRows ?? []) as WhatsAppLine[]);
+          }
         }
 
         // Narrow the DB enum into our AccountRole union. The DB
@@ -215,6 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         setAccount(accountRow);
       } else {
+        setLines([]);
         lastFetchedUserIdRef.current = null;
       }
     } catch (err) {
@@ -287,6 +321,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lastFetchedUserIdRef.current = null;
         setProfile(null);
         setAccount(null);
+        setLines([]);
         setProfileLoading(false);
       }
 
@@ -306,6 +341,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setLines([]);
     window.location.href = "/login";
   }, []);
 
@@ -330,8 +366,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canManageMembers: role ? canManageMembersFor(role) : false,
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
+      hasSingleLine: !profileLoading && lines.length === 1,
     };
-  }, [profile?.account_role, profile?.account_id]);
+  }, [profile?.account_role, profile?.account_id, profileLoading, lines]);
 
   return (
     <AuthContext.Provider
@@ -343,6 +380,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         refreshProfile,
         account,
+        lines,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         ...derived,
       }}
@@ -373,6 +411,8 @@ export function useAuth(): AuthContextValue {
       },
       refreshProfile: async () => {},
       account: null,
+      lines: [],
+      hasSingleLine: false,
       defaultCurrency: DEFAULT_CURRENCY,
       accountId: null,
       accountRole: null,

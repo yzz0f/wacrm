@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       return rateLimitResponse(limit);
     }
 
-    // Resolve the caller's account_id so conversation + whatsapp_config
+    // Resolve the caller's account_id so conversation + whatsapp_lines
     // lookups work for teammates who didn't author the rows directly.
     const { data: profile } = await supabase
       .from('profiles')
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
 
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
-      .select('id, account_id, contact:contacts(phone)')
+      .select('id, account_id, line_id, contact:contacts(phone)')
       .eq('id', targetMessage.conversation_id)
       .eq('account_id', accountId)
       .maybeSingle();
@@ -108,12 +108,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // WhatsApp config + access token. Account-scoped post-multi-user.
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token')
-      .eq('account_id', accountId)
-      .single();
+    // WhatsApp line + access token — the same line the conversation
+    // is on, falling back to the account's default line for rows that
+    // predate line_id.
+    const lineQuery = conversation.line_id
+      ? supabase.from('whatsapp_lines').select('phone_number_id, access_token').eq('id', conversation.line_id)
+      : supabase
+          .from('whatsapp_lines')
+          .select('phone_number_id, access_token')
+          .eq('account_id', accountId)
+          .eq('is_default', true)
+    const { data: config, error: configError } = await lineQuery.single();
 
     if (configError || !config) {
       return NextResponse.json(

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -24,11 +24,20 @@ const steps = [
 export default function NewBroadcastPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.new');
-  const { accountId } = useAuth();
+  const { accountId, lines } = useAuth();
   const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
 
   const [currentStep, setCurrentStep] = useState(0);
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
+  const [lineId, setLineId] = useState<string | null>(null);
+
+  // Default to the account's default line once `lines` resolves.
+  // Doesn't clobber a deliberate choice the user already made.
+  useEffect(() => {
+    if (lineId !== null || lines.length === 0) return;
+    const defaultLine = lines.find((l) => l.is_default) ?? lines[0];
+    setLineId(defaultLine.id);
+  }, [lines, lineId]);
   const [audience, setAudience] = useState<{
     type: 'all' | 'tags' | 'custom_field' | 'csv';
     tagIds?: string[];
@@ -62,6 +71,7 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        lineId,
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
@@ -104,6 +114,7 @@ export default function NewBroadcastPage() {
     const { error } = await supabase.from('broadcasts').insert({
       user_id: user.id,
       account_id: accountId,
+      line_id: lineId,
       name: name.trim(),
       template_name: template.name,
       template_language: template.language ?? 'en_US',
@@ -192,6 +203,8 @@ export default function NewBroadcastPage() {
             <Step1ChooseTemplate
               selectedTemplate={template}
               onSelect={setTemplate}
+              lineId={lineId}
+              onLineChange={setLineId}
               onNext={() => setCurrentStep(1)}
               onBack={() => router.push('/broadcasts')}
             />

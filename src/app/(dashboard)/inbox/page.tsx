@@ -172,12 +172,12 @@ export default function InboxPage() {
 
       if (!user) return;
 
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
+      // Lines are account-scoped post-multi-user, so the previous
+      // `.eq('user_id', user.id)` would miss the row for any teammate
+      // who didn't personally save one — the "WhatsApp not connected"
+      // banner would show in the shared inbox even though the admin
+      // had it configured. Resolve account_id via the profile and
+      // query by that.
       const { data: profile } = await supabase
         .from("profiles")
         .select("account_id")
@@ -189,13 +189,17 @@ export default function InboxPage() {
         return;
       }
 
+      // At least one connected line is enough to clear the banner —
+      // an account with several lines isn't "disconnected" just
+      // because one of them needs attention.
       const { data } = await supabase
-        .from("whatsapp_config")
+        .from("whatsapp_lines")
         .select("status")
         .eq("account_id", accountId)
-        .maybeSingle();
+        .eq("status", "connected")
+        .limit(1);
 
-      setWhatsappConnected(data?.status === "connected");
+      setWhatsappConnected((data?.length ?? 0) > 0);
     };
 
     checkConnection();

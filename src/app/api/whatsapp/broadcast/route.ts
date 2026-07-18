@@ -79,10 +79,10 @@ export async function POST(request: Request) {
       return rateLimitResponse(limit)
     }
 
-    // Resolve the caller's account_id. whatsapp_config + templates
-    // + broadcasts are all account-scoped post-multi-user, so the
-    // old `.eq('user_id', user.id)` filters miss every row created
-    // by a teammate.
+    // Resolve the caller's account_id. Lines + templates + broadcasts
+    // are all account-scoped post-multi-user, so the old
+    // `.eq('user_id', user.id)` filters miss every row created by a
+    // teammate.
     const { data: profile } = await supabase
       .from('profiles')
       .select('account_id')
@@ -103,6 +103,7 @@ export async function POST(request: Request) {
       template_name,
       template_language,
       template_params,
+      line_id,
     } = body
 
     // Normalize to a list of {phone, params} regardless of shape.
@@ -134,11 +135,10 @@ export async function POST(request: Request) {
       )
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    const lineQuery = typeof line_id === 'string'
+      ? supabase.from('whatsapp_lines').select('*').eq('id', line_id).eq('account_id', accountId)
+      : supabase.from('whatsapp_lines').select('*').eq('account_id', accountId).eq('is_default', true)
+    const { data: config, error: configError } = await lineQuery.single()
 
     if (configError || !config) {
       return NextResponse.json(
@@ -161,6 +161,7 @@ export async function POST(request: Request) {
       .from('message_templates')
       .select('*')
       .eq('account_id', accountId)
+      .eq('line_id', config.id)
       .eq('name', template_name)
       .eq('language', template_language || 'en_US')
       .maybeSingle()

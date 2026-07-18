@@ -69,6 +69,8 @@ export interface Account {
  * avatar + role only.
  */
 export interface AccountMember {
+  /** profiles.id — the FK target for line_access.profile_id. */
+  id: string;
   user_id: string;
   full_name: string;
   email: string | null;
@@ -181,6 +183,8 @@ export interface Conversation {
   ai_autoreply_disabled?: boolean;
   ai_reply_count?: number;
   ai_handoff_summary?: string | null;
+  /** Which WhatsApp line this conversation came in on. See WhatsAppLine. */
+  line_id?: string;
 }
 
 // ============================================================
@@ -266,14 +270,23 @@ export interface MessageReaction {
   created_at: string;
 }
 
-export interface WhatsAppConfig {
+/**
+ * A single WhatsApp number connected to an account. An account can
+ * own several lines, each with its own credentials/WABA. See
+ * docs/superpowers/specs/2026-07-18-multi-number-lines-design.md.
+ */
+export interface WhatsAppLine {
   id: string;
+  account_id: string;
   user_id: string;
+  name: string;
   phone_number_id: string;
   waba_id?: string;
   access_token: string;
   verify_token?: string;
   status: 'connected' | 'disconnected';
+  /** Exactly one line per account has this set to true. */
+  is_default: boolean;
   connected_at?: string;
   /**
    * Set when POST /{phone_number_id}/register last succeeded. NULL
@@ -285,6 +298,18 @@ export interface WhatsAppConfig {
   subscribed_apps_at?: string;
   /** Last error from /register; cleared on success. */
   last_registration_error?: string;
+}
+
+/**
+ * Grants a single agent/viewer profile access to a single line.
+ * owner/admin never appear here — they bypass line-level
+ * restriction entirely (see can_access_line() in migration 037).
+ * A profile with zero rows for a given line does not see it.
+ */
+export interface LineAccess {
+  line_id: string;
+  profile_id: string;
+  created_at: string;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)
@@ -333,6 +358,8 @@ export interface MessageTemplate {
   submission_error?: string;
   last_submitted_at?: string;
   created_at: string;
+  /** Which WhatsApp line this template is anchored to (WABA-scoped). */
+  line_id?: string;
 }
 
 export interface Pipeline {
@@ -398,6 +425,8 @@ export interface Broadcast {
   replied_count: number;
   failed_count: number;
   created_at: string;
+  /** Which WhatsApp line this broadcast sends from. */
+  line_id?: string;
 }
 
 export interface BroadcastRecipient {
@@ -592,6 +621,8 @@ export interface Automation {
   last_executed_at?: string | null;
   created_at: string;
   updated_at: string;
+  /** Restricts the trigger to one line. NULL = all lines (default). */
+  line_id?: string | null;
 }
 
 export interface AutomationStep {

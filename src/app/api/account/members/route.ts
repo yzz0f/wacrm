@@ -19,6 +19,7 @@ import { canManageMembers, isAccountRole } from "@/lib/auth/roles";
 import type { AccountMember } from "@/types";
 
 interface ProfileRow {
+  id: string;
   user_id: string;
   full_name: string | null;
   email: string | null;
@@ -35,7 +36,7 @@ export async function GET() {
     // the caller's, so this query is naturally account-scoped.
     const { data, error } = await ctx.supabase
       .from("profiles")
-      .select("user_id, full_name, email, avatar_url, account_role, created_at")
+      .select("id, user_id, full_name, email, avatar_url, account_role, created_at")
       .eq("account_id", ctx.accountId)
       .order("created_at", { ascending: true });
 
@@ -56,6 +57,7 @@ export async function GET() {
       if (!isAccountRole(row.account_role)) return [];
       return [
         {
+          id: row.id,
           user_id: row.user_id,
           full_name: row.full_name ?? "",
           email: canSeeEmails ? row.email : null,

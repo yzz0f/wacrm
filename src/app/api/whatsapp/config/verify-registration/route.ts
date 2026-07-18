@@ -7,12 +7,15 @@ import {
 } from '@/lib/whatsapp/meta-api'
 
 /**
- * GET /api/whatsapp/config/verify-registration
+ * GET /api/whatsapp/config/verify-registration?line_id=<uuid>
  *
- * Diagnostic endpoint — confirms the user's saved phone number is
- * actually reachable on Meta's side. Solves the failure mode that
- * surfaced the multi-number bug originally: "UI says Connected but
- * Meta isn't delivering events."
+ * Diagnostic endpoint — confirms a saved phone number is actually
+ * reachable on Meta's side. Solves the failure mode that surfaced
+ * the multi-number bug originally: "UI says Connected but Meta isn't
+ * delivering events."
+ *
+ * `line_id` is optional — omitting it checks the account's default
+ * line, for back-compat with the pre-multi-line single-config case.
  *
  * Three checks run independently so the UI can show which step
  * passes and which fails:
@@ -28,7 +31,7 @@ import {
  * rather than a generic error toast. The combined `live` flag is
  * what the UI badges on.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -38,9 +41,9 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // whatsapp_config is one-row-per-account post-017. Resolve the
-  // caller's account_id so a teammate who joined an existing account
-  // sees the same registration state as the admin who set it up.
+  // Resolve the caller's account_id so a teammate who joined an
+  // existing account sees the same registration state as the admin
+  // who set it up.
   const { data: profile } = await supabase
     .from('profiles')
     .select('account_id')
@@ -55,11 +58,15 @@ export async function GET() {
     })
   }
 
-  const { data: config } = await supabase
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .maybeSingle()
+  const lineId = new URL(request.url).searchParams.get('line_id')
+  const lineQuery = lineId
+    ? supabase.from('whatsapp_lines').select('*').eq('id', lineId).eq('account_id', accountId)
+    : supabase
+        .from('whatsapp_lines')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('is_default', true)
+  const { data: config } = await lineQuery.maybeSingle()
 
   if (!config) {
     return NextResponse.json({

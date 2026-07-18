@@ -65,7 +65,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Resolve the caller's account_id so template + whatsapp_config
+    // Resolve the caller's account_id so template + line
     // lookups work for teammates who didn't author the row.
     const { data: profile } = await supabase
       .from('profiles')
@@ -91,7 +91,7 @@ export async function PATCH(
     // meta_template_id and status — fetch explicitly.
     const { data: existing, error: lookupErr } = await supabase
       .from('message_templates')
-      .select('id, name, status, meta_template_id, language')
+      .select('id, name, status, meta_template_id, language, line_id')
       .eq('id', id)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -139,9 +139,9 @@ export async function PATCH(
 
     if (!isDryRun()) {
       const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
+        .from('whatsapp_lines')
         .select('*')
-        .eq('account_id', accountId)
+        .eq('id', existing.line_id)
         .single()
       if (configError || !config) {
         return NextResponse.json(
@@ -252,8 +252,8 @@ export async function DELETE(
     }
 
     // Same account-scoping rationale as the PATCH handler above —
-    // teammates need to be able to operate on shared templates +
-    // the shared whatsapp_config.
+    // teammates need to be able to operate on shared templates, each
+    // resolving credentials through the template's own line.
     const { data: profile } = await supabase
       .from('profiles')
       .select('account_id')
@@ -269,7 +269,7 @@ export async function DELETE(
 
     const { data: existing, error: lookupErr } = await supabase
       .from('message_templates')
-      .select('id, name, meta_template_id')
+      .select('id, name, meta_template_id, line_id')
       .eq('id', id)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -279,9 +279,9 @@ export async function DELETE(
 
     if (existing.meta_template_id && !isDryRun()) {
       const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
+        .from('whatsapp_lines')
         .select('*')
-        .eq('account_id', accountId)
+        .eq('id', existing.line_id)
         .single()
       if (configError || !config || !config.waba_id) {
         return NextResponse.json(
