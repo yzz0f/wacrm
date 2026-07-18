@@ -8,6 +8,7 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -54,7 +55,8 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  
+  const { lines } = useAuth();
+
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
@@ -72,6 +74,7 @@ export function ConversationList({
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -158,6 +161,12 @@ export function ConversationList({
     return m;
   }, [tags]);
 
+  const linesById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of lines) m.set(l.id, l.name);
+    return m;
+  }, [lines]);
+
   const filtered = useMemo(() => {
     let result = conversations;
 
@@ -177,6 +186,10 @@ export function ConversationList({
       );
     }
 
+    if (selectedLineId !== null) {
+      result = result.filter((c) => c.line_id === selectedLineId);
+    }
+
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter((c) => {
@@ -188,7 +201,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, filter, search, selectedTagIds, selectedCompany, selectedLineId]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -305,6 +318,54 @@ export function ConversationList({
             </DropdownMenu>
           )}
 
+          {lines.length > 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className={cn(
+                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  selectedLineId
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <span className="truncate">
+                  {selectedLineId ? linesById.get(selectedLineId) ?? t("line") : t("line")}
+                </span>
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="max-h-64 w-56 border-border bg-popover"
+              >
+                <DropdownMenuItem
+                  onClick={() => setSelectedLineId(null)}
+                  className={cn(
+                    "text-sm",
+                    selectedLineId === null
+                      ? "text-primary"
+                      : "text-popover-foreground"
+                  )}
+                >
+                  {t("allLines")}
+                </DropdownMenuItem>
+                {lines.map((line) => (
+                  <DropdownMenuItem
+                    key={line.id}
+                    onClick={() => setSelectedLineId(line.id)}
+                    className={cn(
+                      "text-sm",
+                      selectedLineId === line.id
+                        ? "text-primary"
+                        : "text-popover-foreground"
+                    )}
+                  >
+                    <span className="truncate">{line.name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
           {companies.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -414,6 +475,7 @@ export function ConversationList({
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
                 t={t}
+                lineName={lines.length > 1 ? conv.line_id ? linesById.get(conv.line_id) : undefined : undefined}
               />
             ))}
           </div>
@@ -428,6 +490,9 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
+  /** Only set when the account has more than one line — a single-line
+   *  account has nothing to distinguish, so no badge renders. */
+  lineName?: string;
 }
 
 function ConversationItem({
@@ -435,6 +500,7 @@ function ConversationItem({
   isActive,
   onSelect,
   t,
+  lineName,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || t("unknown");
@@ -498,6 +564,11 @@ function ConversationItem({
             />
           </div>
         </div>
+        {lineName && (
+          <span className="mt-1 inline-flex max-w-full items-center truncate rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">
+            {lineName}
+          </span>
+        )}
       </div>
     </button>
   );

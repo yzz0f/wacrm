@@ -208,6 +208,8 @@
       "tags": "Etiquetas",
       "company": "Empresa",
       "allCompanies": "Todas las empresas",
+      "line": "Línea",
+      "allLines": "Todas las líneas",
       "clearAll": "Borrar todo",
       "noConversations": "No se encontraron conversaciones",
       "noMessagesYet": "Aún no hay mensajes",

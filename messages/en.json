@@ -208,6 +208,8 @@
       "tags": "Tags",
       "company": "Company",
       "allCompanies": "All companies",
+      "line": "Line",
+      "allLines": "All lines",
       "clearAll": "Clear all",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
