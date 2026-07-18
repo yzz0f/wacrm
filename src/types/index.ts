@@ -270,31 +270,9 @@ export interface MessageReaction {
   created_at: string;
 }
 
-export interface WhatsAppConfig {
-  id: string;
-  user_id: string;
-  phone_number_id: string;
-  waba_id?: string;
-  access_token: string;
-  verify_token?: string;
-  status: 'connected' | 'disconnected';
-  connected_at?: string;
-  /**
-   * Set when POST /{phone_number_id}/register last succeeded. NULL
-   * means the number was saved but never actually subscribed for
-   * webhooks on Meta's side — inbound events will be silently lost.
-   */
-  registered_at?: string;
-  /** Set when POST /{waba_id}/subscribed_apps last succeeded. */
-  subscribed_apps_at?: string;
-  /** Last error from /register; cleared on success. */
-  last_registration_error?: string;
-}
-
 /**
- * A single WhatsApp number connected to an account. Replaces
- * WhatsAppConfig's one-row-per-account assumption — an account can
- * now own several lines, each with its own credentials/WABA. See
+ * A single WhatsApp number connected to an account. An account can
+ * own several lines, each with its own credentials/WABA. See
  * docs/superpowers/specs/2026-07-18-multi-number-lines-design.md.
  */
 export interface WhatsAppLine {
