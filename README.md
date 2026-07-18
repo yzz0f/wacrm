@@ -152,6 +152,32 @@ Key pages:
 - [Architecture](https://wacrm.tech/docs/architecture)
 - [Troubleshooting](https://wacrm.tech/docs/troubleshooting)
 
+## Platform admin panel (optional)
+
+wacrm runs perfectly well self-hosted for a single team with no setup
+beyond the Quick start above — this section only applies if you're
+operating it as a multi-tenant SaaS for other people's accounts.
+
+An internal super-admin panel lists every account on the instance and
+lets your team suspend/reactivate accounts, request/cancel deletion,
+and temporarily act as an account's owner for support (with a full
+audit trail the account's own members can see, and a 30-minute
+auto-expiring session with a persistent "Acting as…" banner).
+
+To turn it on:
+1. Set `PLATFORM_ADMIN_HOST` and `NEXT_PUBLIC_APP_HOST` (see
+   `.env.local.example`) and point a DNS record at the admin host —
+   no separate deployment needed.
+2. Grant access by hand — there's no UI for this in v1:
+
+   ```sql
+   UPDATE profiles SET is_platform_admin = true WHERE user_id = '<uuid>';
+   ```
+
+3. Optionally schedule `GET /api/platform-admin/cron/purge-pending-deletions`
+   (daily) with `PLATFORM_ADMIN_CRON_SECRET` set, to hard-delete
+   accounts 30+ days past a requested deletion.
+
 ## Stack
 
 - **App** — Next.js 16 (App Router), React 19, TypeScript, Tailwind v4.
