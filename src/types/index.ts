@@ -181,6 +181,8 @@ export interface Conversation {
   ai_autoreply_disabled?: boolean;
   ai_reply_count?: number;
   ai_handoff_summary?: string | null;
+  /** Which WhatsApp line this conversation came in on. See WhatsAppLine. */
+  line_id?: string;
 }
 
 // ============================================================
@@ -287,6 +289,49 @@ export interface WhatsAppConfig {
   last_registration_error?: string;
 }
 
+/**
+ * A single WhatsApp number connected to an account. Replaces
+ * WhatsAppConfig's one-row-per-account assumption — an account can
+ * now own several lines, each with its own credentials/WABA. See
+ * docs/superpowers/specs/2026-07-18-multi-number-lines-design.md.
+ */
+export interface WhatsAppLine {
+  id: string;
+  account_id: string;
+  user_id: string;
+  name: string;
+  phone_number_id: string;
+  waba_id?: string;
+  access_token: string;
+  verify_token?: string;
+  status: 'connected' | 'disconnected';
+  /** Exactly one line per account has this set to true. */
+  is_default: boolean;
+  connected_at?: string;
+  /**
+   * Set when POST /{phone_number_id}/register last succeeded. NULL
+   * means the number was saved but never actually subscribed for
+   * webhooks on Meta's side — inbound events will be silently lost.
+   */
+  registered_at?: string;
+  /** Set when POST /{waba_id}/subscribed_apps last succeeded. */
+  subscribed_apps_at?: string;
+  /** Last error from /register; cleared on success. */
+  last_registration_error?: string;
+}
+
+/**
+ * Grants a single agent/viewer profile access to a single line.
+ * owner/admin never appear here — they bypass line-level
+ * restriction entirely (see can_access_line() in migration 037).
+ * A profile with zero rows for a given line does not see it.
+ */
+export interface LineAccess {
+  line_id: string;
+  profile_id: string;
+  created_at: string;
+}
+
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)
 // rather than collapsing to a local TitleCase set — distinctions like
 // PAUSED vs DISABLED vs IN_APPEAL drive the edit/resubmit/delete flows.
@@ -333,6 +378,8 @@ export interface MessageTemplate {
   submission_error?: string;
   last_submitted_at?: string;
   created_at: string;
+  /** Which WhatsApp line this template is anchored to (WABA-scoped). */
+  line_id?: string;
 }
 
 export interface Pipeline {
@@ -398,6 +445,8 @@ export interface Broadcast {
   replied_count: number;
   failed_count: number;
   created_at: string;
+  /** Which WhatsApp line this broadcast sends from. */
+  line_id?: string;
 }
 
 export interface BroadcastRecipient {
@@ -592,6 +641,8 @@ export interface Automation {
   last_executed_at?: string | null;
   created_at: string;
   updated_at: string;
+  /** Restricts the trigger to one line. NULL = all lines (default). */
+  line_id?: string | null;
 }
 
 export interface AutomationStep {
