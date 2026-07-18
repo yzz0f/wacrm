@@ -27,8 +27,8 @@ interface OverviewCounts {
 }
 
 interface WhatsAppStatus {
-  configured: boolean;
-  connected: boolean;
+  lineCount: number;
+  connectedCount: number;
 }
 
 export function SettingsOverview({
@@ -117,21 +117,20 @@ export function SettingsOverview({
       setCountsLoading(false);
     })();
 
-    // WhatsApp connection status — slower, independent.
+    // WhatsApp line status — slower, independent. An account can have
+    // several lines now, so this counts how many exist and how many
+    // are actually `connected` rather than checking a single row.
     (async () => {
       setWhatsappLoading(true);
-      const [row, health] = await Promise.allSettled([
-        supabase
-          .from('whatsapp_config')
-          .select('phone_number_id')
-          .eq('account_id', acctId)
-          .maybeSingle(),
-        fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) => r.json()),
-      ]);
+      const rows = await supabase
+        .from('whatsapp_lines')
+        .select('status')
+        .eq('account_id', acctId);
       if (cancelled) return;
+      const lines = rows.data ?? [];
       setWhatsapp({
-        configured: row.status === 'fulfilled' && !!row.value.data?.phone_number_id,
-        connected: health.status === 'fulfilled' && !!health.value?.connected,
+        lineCount: lines.length,
+        connectedCount: lines.filter((l) => l.status === 'connected').length,
       });
       setWhatsappLoading(false);
     })();
@@ -161,15 +160,22 @@ export function SettingsOverview({
     {
       section: 'whatsapp',
       loading: whatsappLoading,
-      subtitle: !whatsapp?.configured ? (
+      subtitle: !whatsapp || whatsapp.lineCount === 0 ? (
         t('notSetup')
-      ) : whatsapp.connected ? (
-        <>
-          <StatusDot tone="ok" /> {t('connected')}
-        </>
+      ) : whatsapp.lineCount === 1 ? (
+        whatsapp.connectedCount === 1 ? (
+          <>
+            <StatusDot tone="ok" /> {t('connected')}
+          </>
+        ) : (
+          <>
+            <StatusDot tone="muted" /> {t('needsReconnecting')}
+          </>
+        )
       ) : (
         <>
-          <StatusDot tone="muted" /> {t('needsReconnecting')}
+          <StatusDot tone={whatsapp.connectedCount === whatsapp.lineCount ? 'ok' : 'muted'} />{' '}
+          {t('linesConnected', { connected: whatsapp.connectedCount, total: whatsapp.lineCount })}
         </>
       ),
     },

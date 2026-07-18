@@ -176,14 +176,20 @@ export async function GET(request: Request) {
  * Saves or updates a WhatsApp line for the authenticated account.
  * Verifies credentials with Meta first, then encrypts and stores.
  *
- * Body accepts an optional `line_id`:
- *   - present  → update that existing line (404 if it doesn't belong
- *     to this account).
- *   - absent, account has zero lines → create the first one, marked
- *     as the account's default.
- *   - absent, account has exactly one line → update that line (keeps
+ * Body accepts an optional `line_id` and `create`:
+ *   - line_id present → update that existing line (404 if it doesn't
+ *     belong to this account).
+ *   - `create: true` → always create a new line, regardless of how
+ *     many the account already has. Only becomes the account's
+ *     default when it's the very first line. This is how the Lines
+ *     settings page's "Add line" button asks for a new one even when
+ *     others already exist.
+ *   - neither, account has zero lines → create the first one, marked
+ *     as the account's default (back-compat with pre-multi-line
+ *     callers hitting this route for the first time).
+ *   - neither, account has exactly one line → update that line (keeps
  *     old single-line callers working without changes).
- *   - absent, account has 2+ lines → ambiguous, 400. The caller must
+ *   - neither, account has 2+ lines → ambiguous, 400. The caller must
  *     say which line it means once there's more than one.
  */
 export async function POST(request: Request) {
@@ -208,7 +214,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { line_id, name, phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const { line_id, create, name, phone_number_id, waba_id, access_token, verify_token, pin } = body
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
@@ -274,7 +280,11 @@ export async function POST(request: Request) {
     }
 
     // Resolve which line row this save targets — see the doc comment
-    // above for the precedence rules.
+    // above for the precedence rules. `create: true` (sent by the
+    // Lines settings page's "Add line" action) always creates a new
+    // row, even when the account already has others — the only way
+    // to distinguish "add another" from "update the sole existing
+    // one" once there's more than one line.
     let existing: { id: string; registered_at: string | null; phone_number_id: string; is_default: boolean } | null = null
     if (line_id) {
       const { data } = await supabase
@@ -287,6 +297,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Line not found' }, { status: 404 })
       }
       existing = data
+    } else if (create) {
+      existing = null
     } else {
       const { data: accountLines, error: linesError } = await supabase
         .from('whatsapp_lines')
@@ -429,16 +441,26 @@ export async function POST(request: Request) {
         )
       }
     } else {
-      // First line for this account — mark it default. Insert with
-      // both `account_id` (tenancy key) and `user_id` (audit column
-      // identifying which member of the account saved the line).
+      // Only the account's very first line becomes the default — a
+      // deliberate "Add line" (create: true) on an account that
+      // already has one or more lines must NOT steal the default
+      // flag (that partial unique index only allows one true per
+      // account, and existing send paths lean on it as the fallback).
+      const { count: existingLineCount } = await supabase
+        .from('whatsapp_lines')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', accountId)
+
+      // Insert with both `account_id` (tenancy key) and `user_id`
+      // (audit column identifying which member of the account saved
+      // the line).
       const { error: insertError } = await supabase
         .from('whatsapp_lines')
         .insert({
           account_id: accountId,
           user_id: user.id,
           name: typeof name === 'string' && name.trim() ? name.trim() : 'Línea principal',
-          is_default: true,
+          is_default: !existingLineCount,
           ...baseRow,
         })
 

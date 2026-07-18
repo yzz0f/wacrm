@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
+  ArrowLeft,
   Eye,
   EyeOff,
   Copy,
@@ -36,14 +37,25 @@ const MASKED_TOKEN = '••••••••••••••••';
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
-export function WhatsAppConfig() {
+export interface WhatsAppConfigProps {
+  /** Editing an existing line. Omit to create a new one. */
+  lineId?: string;
+  /** Called after a successful save (create or update) — the Lines
+   *  list panel uses this to navigate back and refresh. */
+  onSaved?: () => void;
+  /** Called after a successful delete (create mode has no delete). */
+  onDeleted?: () => void;
+  /** Renders a "Back to lines" affordance above the panel head. */
+  onBack?: () => void;
+}
+
+export function WhatsAppConfig({ lineId, onSaved, onDeleted, onBack }: WhatsAppConfigProps = {}) {
   const t = useTranslations('Settings.whatsapp');
   const supabase = createClient();
-  // After multi-user, whatsapp_config is one-row-per-account, not
-  // one-row-per-user. We pull `accountId` straight off the auth
-  // context and key every read off it — so a teammate who just
-  // joined an account sees the inviter's saved config without
-  // having to re-enter anything.
+  // Every line is account-scoped, but which ROW depends on `lineId`
+  // (undefined = creating a new line). We pull `accountId` straight
+  // off the auth context so a teammate who just joined an account
+  // sees the inviter's saved lines without having to re-enter anything.
   const { user, accountId, loading: authLoading, profileLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -63,6 +75,7 @@ export function WhatsAppConfig() {
   // again and overwrites whatever the user typed but hadn't saved yet.
   const loadedAccountIdRef = useRef<string | null>(null);
 
+  const [lineName, setLineName] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
   const [accessToken, setAccessToken] = useState('');
@@ -94,27 +107,41 @@ export function WhatsAppConfig() {
       ? `${window.location.origin}/api/whatsapp/webhook`
       : '';
 
-  const fetchConfig = useCallback(async (acctId: string) => {
+  const fetchConfig = useCallback(async (acctId: string, targetLineId?: string) => {
+    // Creating a new line — nothing to load, start from a blank form.
+    if (!targetLineId) {
+      setConfig(null);
+      setLineName('');
+      setPhoneNumberId('');
+      setWabaId('');
+      setAccessToken('');
+      setVerifyToken('');
+      setPin('');
+      setTokenEdited(false);
+      setConnectionStatus('disconnected');
+      setResetReason(null);
+      setStatusMessage('');
+      setRegistrationProbe(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
-      // Load form values from Supabase (shows what's in DB).
-      // Switched from `user_id` (which would only match the row's
-      // original author) to `account_id` so every member of the
-      // account sees the same saved configuration. UNIQUE(account_id)
-      // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
       const { data, error } = await supabase
-        .from('whatsapp_config')
+        .from('whatsapp_lines')
         .select('*')
+        .eq('id', targetLineId)
         .eq('account_id', acctId)
         .maybeSingle();
 
       if (error) {
-        console.error('Failed to load config row:', error);
+        console.error('Failed to load line row:', error);
       }
 
       if (data) {
         setConfig(data);
+        setLineName(data.name || '');
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
@@ -123,6 +150,7 @@ export function WhatsAppConfig() {
         setTokenEdited(false);
       } else {
         setConfig(null);
+        setLineName('');
         setPhoneNumberId('');
         setWabaId('');
         setAccessToken('');
@@ -136,7 +164,7 @@ export function WhatsAppConfig() {
       // Then verify health via the API (decrypts token + pings Meta)
       if (data) {
         try {
-          const res = await fetch('/api/whatsapp/config', { method: 'GET' });
+          const res = await fetch(`/api/whatsapp/config?line_id=${targetLineId}`, { method: 'GET' });
           const payload = await res.json();
 
           if (payload.connected) {
@@ -177,10 +205,14 @@ export function WhatsAppConfig() {
       setLoading(false);
       return;
     }
-    if (loadedAccountIdRef.current === accountId) return;
-    loadedAccountIdRef.current = accountId;
-    fetchConfig(accountId);
-  }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+    // Re-key on lineId too — switching from editing one line to
+    // another (or to "Add line") must re-run even though accountId
+    // didn't change.
+    const cacheKey = `${accountId}:${lineId ?? 'new'}`;
+    if (loadedAccountIdRef.current === cacheKey) return;
+    loadedAccountIdRef.current = cacheKey;
+    fetchConfig(accountId, lineId);
+  }, [authLoading, profileLoading, user?.id, accountId, lineId, fetchConfig]);
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
@@ -203,10 +235,15 @@ export function WhatsAppConfig() {
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
         verify_token: verifyToken.trim() || null,
+        name: lineName.trim() || null,
         // Optional — only sent when the user filled it in. The server
         // requires it on first save or when changing numbers; for a
         // simple token rotation, leaving it blank skips re-register.
         pin: pin.trim() || null,
+        // Tell the API exactly which line this is: update the one
+        // we're editing, or explicitly create a new one — never let
+        // it guess when the account already has other lines.
+        ...(lineId ? { line_id: lineId } : { create: true }),
       };
 
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
@@ -268,7 +305,8 @@ export function WhatsAppConfig() {
         setPin('');
       }
 
-      if (accountId) await fetchConfig(accountId);
+      if (accountId) await fetchConfig(accountId, lineId);
+      onSaved?.();
     } catch (err) {
       console.error('Save error:', err);
       toast.error('Failed to save configuration');
@@ -280,7 +318,8 @@ export function WhatsAppConfig() {
   async function handleTestConnection() {
     try {
       setTesting(true);
-      const res = await fetch('/api/whatsapp/config', { method: 'GET' });
+      const url = lineId ? `/api/whatsapp/config?line_id=${lineId}` : '/api/whatsapp/config';
+      const res = await fetch(url, { method: 'GET' });
       const payload = await res.json();
 
       if (payload.connected) {
@@ -311,9 +350,10 @@ export function WhatsAppConfig() {
     setVerifyingRegistration(true);
     setRegistrationProbe(null);
     try {
-      const res = await fetch('/api/whatsapp/config/verify-registration', {
-        method: 'GET',
-      });
+      const url = lineId
+        ? `/api/whatsapp/config/verify-registration?line_id=${lineId}`
+        : '/api/whatsapp/config/verify-registration';
+      const res = await fetch(url, { method: 'GET' });
       const data = (await res.json()) as RegistrationProbe;
       setRegistrationProbe(data);
       if (data.live) {
@@ -324,7 +364,7 @@ export function WhatsAppConfig() {
           { duration: 8000 },
         );
       }
-      if (accountId) await fetchConfig(accountId);
+      if (accountId) await fetchConfig(accountId, lineId);
     } catch (err) {
       console.error('verify-registration failed:', err);
       toast.error('Could not reach the verification endpoint.');
@@ -334,13 +374,14 @@ export function WhatsAppConfig() {
   }
 
   async function handleReset() {
-    if (!confirm('This will delete the current WhatsApp config so you can re-enter it. Continue?')) {
+    if (!confirm('This will delete this WhatsApp line so you can re-enter it. Continue?')) {
       return;
     }
 
     try {
       setResetting(true);
-      const res = await fetch('/api/whatsapp/config', { method: 'DELETE' });
+      const url = lineId ? `/api/whatsapp/config?line_id=${lineId}` : '/api/whatsapp/config';
+      const res = await fetch(url, { method: 'DELETE' });
       const data = await res.json();
 
       if (!res.ok) {
@@ -350,6 +391,7 @@ export function WhatsAppConfig() {
 
       toast.success('Configuration cleared. You can now re-enter your credentials.');
       setConfig(null);
+      setLineName('');
       setPhoneNumberId('');
       setWabaId('');
       setAccessToken('');
@@ -358,6 +400,10 @@ export function WhatsAppConfig() {
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
+      // Deleting a whole line (vs. clearing a corrupted token to
+      // re-enter it) has nothing left to show here — hand control
+      // back to the list.
+      if (lineId) onDeleted?.();
     } catch (err) {
       console.error('Reset error:', err);
       toast.error('Failed to reset configuration');
@@ -371,11 +417,23 @@ export function WhatsAppConfig() {
     toast.success('Webhook URL copied to clipboard');
   }
 
+  const backLink = onBack ? (
+    <button
+      type="button"
+      onClick={onBack}
+      className="mb-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft className="size-4" />
+      {t('backToLines')}
+    </button>
+  ) : null;
+
   if (loading) {
     return (
       <section className="animate-in fade-in-50 duration-200">
+        {backLink}
         <SettingsPanelHead
-          title={t("title")}
+          title={lineId ? t("editLineTitle") : t("newLineTitle")}
           description={t("description")}
         />
         <div className="flex items-center justify-center py-12">
@@ -389,8 +447,9 @@ export function WhatsAppConfig() {
 
   return (
     <section className="animate-in fade-in-50 duration-200">
+      {backLink}
       <SettingsPanelHead
-        title={t("title")}
+        title={lineId ? t("editLineTitle") : t("newLineTitle")}
         description={t("description")}
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
@@ -563,6 +622,16 @@ export function WhatsAppConfig() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">{t('lineName')}</Label>
+              <Input
+                placeholder={t('lineNamePlaceholder')}
+                value={lineName}
+                onChange={(e) => setLineName(e.target.value)}
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+              />
+            </div>
+
             <div className="space-y-2">
               <Label className="text-muted-foreground">{t('phoneNumberId')}</Label>
               <Input
