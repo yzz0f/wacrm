@@ -165,6 +165,23 @@ CREATE INDEX IF NOT EXISTS idx_automations_line          ON automations(line_id)
 CREATE INDEX IF NOT EXISTS idx_flows_line                ON flows(line_id);
 
 -- ============================================================
+-- CONVERSATION DEDUP UNIQUENESS — widen to include line_id
+--
+-- Migration 036 added `UNIQUE(account_id, contact_id)` so a contact
+-- can have at most one conversation per account. Under multi-line
+-- that's too narrow: the same contact messaging two different lines
+-- of the same account must get two separate conversation threads
+-- (see spec's "Identidad de contacto" decision). Swap it for
+-- `UNIQUE(account_id, contact_id, line_id)` — Postgres treats NULLs
+-- as distinct in unique indexes, so this stays a no-op for any row
+-- still mid-backfill (line_id NULL) and only starts enforcing
+-- per-line once every row has one (Fase 10).
+-- ============================================================
+DROP INDEX IF EXISTS idx_conversations_account_contact;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_account_contact_line
+  ON conversations (account_id, contact_id, line_id);
+
+-- ============================================================
 -- LINE_ACCESS — per-line allow-list for agent/viewer roles
 --
 -- owner/admin never consult this table (bypass via

@@ -101,9 +101,9 @@ export async function GET(request: Request) {
       )
     }
 
-    // Fetch all whatsapp configs to check verify tokens
+    // Fetch all whatsapp lines to check verify tokens
     const { data: configs, error: configError } = await supabaseAdmin()
-      .from('whatsapp_config')
+      .from('whatsapp_lines')
       .select('id, verify_token')
 
     if (configError || !configs) {
@@ -136,7 +136,7 @@ export async function GET(request: Request) {
       // since it's a no-op once the column is already GCM.
       if (isLegacyFormat(matchedConfig.verify_token)) {
         void supabaseAdmin()
-          .from('whatsapp_config')
+          .from('whatsapp_lines')
           .update({ verify_token: encrypt(verifyToken) })
           .eq('id', matchedConfig.id)
           .then(({ error }: { error: unknown }) => {
@@ -247,42 +247,43 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       const phoneNumberId = value.metadata.phone_number_id
 
-      // Find user's config by phone_number_id. `.single()` returns
+      // Find the line by phone_number_id. `.single()` returns
       // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
       // operators see the real cause in logs. ≥2 rows shouldn't happen
-      // post-migration 013 (UNIQUE constraint), but a row created
-      // before the constraint, or a race, would still surface here.
-      const { data: configRows, error: configError } = await supabaseAdmin()
-        .from('whatsapp_config')
+      // (whatsapp_lines.phone_number_id is UNIQUE — one number always
+      // maps to exactly one line), but a row created before the
+      // constraint, or a race, would still surface here.
+      const { data: lineRows, error: configError } = await supabaseAdmin()
+        .from('whatsapp_lines')
         .select('*')
         .eq('phone_number_id', phoneNumberId)
 
       if (configError) {
         console.error(
-          'Error fetching whatsapp_config for phone_number_id:',
+          'Error fetching whatsapp_lines for phone_number_id:',
           phoneNumberId,
           configError
         )
         continue
       }
 
-      if (!configRows || configRows.length === 0) {
-        console.error('No config found for phone_number_id:', phoneNumberId)
+      if (!lineRows || lineRows.length === 0) {
+        console.error('No line found for phone_number_id:', phoneNumberId)
         continue
       }
 
-      if (configRows.length > 1) {
+      if (lineRows.length > 1) {
         console.error(
-          `Multiple configs (${configRows.length}) found for phone_number_id:`,
+          `Multiple lines (${lineRows.length}) found for phone_number_id:`,
           phoneNumberId,
-          '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
+          '— inbound message dropped. Resolve duplicates so each number maps to a single line.',
           'Account owners:',
-          configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
+          lineRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
         )
         continue
       }
 
-      const config = configRows[0]
+      const config = lineRows[0]
 
       const decryptedAccessToken = decrypt(config.access_token)
 
@@ -298,8 +299,12 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           config.account_id,
           // Audit / sender-of-record — used as the user_id on row
           // inserts that need it for NOT NULL FK compliance. Always
-          // the admin who saved the WhatsApp config.
+          // the admin who saved the WhatsApp line.
           config.user_id,
+          // Which line this message came in on — stamped onto the
+          // conversation so multi-line accounts route replies back
+          // out through the right number.
+          config.id,
           decryptedAccessToken
         )
       }
@@ -560,14 +565,19 @@ async function handleReaction(
 async function processMessage(
   message: WhatsAppMessage,
   contact: { profile: { name: string }; wa_id: string },
-  // Tenancy. Resolved from the matched whatsapp_config row; every
+  // Tenancy. Resolved from the matched whatsapp_lines row; every
   // contact / conversation / message row created downstream is
   // stamped with this so any member of the account can see it.
   accountId: string,
   // Sender-of-record for inserts that need a NOT NULL user_id FK
   // (contacts, conversations). Always the admin who saved the
-  // WhatsApp config; the choice is arbitrary post-017 but stable.
+  // WhatsApp line; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
+  // Which whatsapp_lines row this message arrived on. Stamped onto
+  // new conversations (never onto existing ones — a conversation
+  // doesn't change lines mid-thread) so multi-line accounts route
+  // outbound replies and per-line RLS correctly.
+  lineId: string,
   accessToken: string
 ) {
   const senderPhone = normalizePhone(message.from)
@@ -587,7 +597,8 @@ async function processMessage(
   const convResult = await findOrCreateConversation(
     accountId,
     configOwnerUserId,
-    contactRecord.id
+    contactRecord.id,
+    lineId
   )
   if (!convResult) return
   const conversation = convResult.conversation
@@ -1045,8 +1056,13 @@ async function findOrCreateConversation(
   accountId: string,
   configOwnerUserId: string,
   contactId: string,
+  lineId: string,
 ) {
-  // Look for an existing conversation in this account, oldest-first.
+  // Look for an existing conversation on THIS line, oldest-first. A
+  // contact is shared account-wide (notes/tags/deals), but each line
+  // that messages them gets its own conversation thread — filtering
+  // by line_id here is what keeps a Sales thread and a Support thread
+  // for the same phone number from merging into one.
   //
   // We deliberately do NOT use `.single()` here. `.single()` errors on
   // *both* 0 rows and ≥2 rows, and the old code treated any error as
@@ -1064,6 +1080,7 @@ async function findOrCreateConversation(
     .select('*')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
+    .eq('line_id', lineId)
     .order('created_at', { ascending: true })
     .limit(1)
 
@@ -1084,6 +1101,7 @@ async function findOrCreateConversation(
       account_id: accountId,
       user_id: configOwnerUserId,
       contact_id: contactId,
+      line_id: lineId,
     })
     .select()
     .single()
@@ -1099,6 +1117,7 @@ async function findOrCreateConversation(
         .select('*')
         .eq('account_id', accountId)
         .eq('contact_id', contactId)
+        .eq('line_id', lineId)
         .order('created_at', { ascending: true })
         .limit(1)
       if (raced && raced.length > 0) {
