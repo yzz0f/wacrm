@@ -13,6 +13,10 @@ import type { Conversation, Message } from '@/types';
 export interface ApiConversation {
   id: string;
   contact_id: string;
+  /** Which WhatsApp line this conversation is on. Null on accounts that
+   *  predate multi-line support and haven't been backfilled, or in the
+   *  unlikely case a line was deleted out from under the conversation. */
+  line_id: string | null;
   status: string;
   assigned_agent_id: string | null;
   last_message_text: string | null;
@@ -55,6 +59,7 @@ export function serializeConversation(conv: Conversation): ApiConversation {
   return {
     id: conv.id,
     contact_id: conv.contact_id,
+    line_id: conv.line_id ?? null,
     status: conv.status,
     assigned_agent_id: conv.assigned_agent_id ?? null,
     last_message_text: conv.last_message_text ?? null,

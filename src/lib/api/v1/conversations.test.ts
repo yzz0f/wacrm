@@ -29,6 +29,14 @@ describe('serializeConversation', () => {
     expect(out.contact?.tags).toEqual([{ id: 't1', name: 'vip', color: '#fff' }]);
     expect(out.unread_count).toBe(2);
   });
+
+  it('includes line_id, and defaults it to null when absent', () => {
+    const withLine = { id: 'c1', line_id: 'line-1' } as unknown as Conversation;
+    expect(serializeConversation(withLine).line_id).toBe('line-1');
+
+    const withoutLine = { id: 'c2' } as unknown as Conversation;
+    expect(serializeConversation(withoutLine).line_id).toBeNull();
+  });
 });
 
 describe('serializeMessage', () => {

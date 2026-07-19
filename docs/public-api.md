@@ -142,7 +142,10 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
     "language": "en_US",
     "params": ["A123"]        // positional body vars, or a structured object
   },
-  "reply_to_message_id": "<uuid>"   // optional; must be in the same conversation
+  "reply_to_message_id": "<uuid>",  // optional; must be in the same conversation
+  "line_id": "<uuid>"               // optional — which WhatsApp line to send from;
+                                     // defaults to the account's default line.
+                                     // See GET /api/v1/lines.
 }
 ```
 
@@ -203,13 +206,37 @@ contact in another account returns `404`.
 ### `GET /api/v1/conversations`
 
 List conversations, newest first. Scope: `conversations:read`.
-Paginated. Optional filters: `?status=` (`open` / `pending` / `closed`)
-and `?contact_id=`. Each conversation embeds its contact + tags.
+Paginated. Optional filters: `?status=` (`open` / `pending` / `closed`),
+`?contact_id=`, and `?line_id=` (see `GET /api/v1/lines`). Each
+conversation embeds its contact + tags and includes `line_id` —
+which WhatsApp line it came in on (`null` only on rows from an
+account that predates multi-line support).
 
 ### `GET /api/v1/conversations/{id}`
 
 Read one conversation. Scope: `conversations:read`. `404` if it belongs
 to another account.
+
+### `GET /api/v1/lines`
+
+List the account's WhatsApp lines — no scope required, same tier as
+`GET /api/v1/me`. Use this to discover valid `line_id` values before
+passing one to `POST /api/v1/messages` or the `?line_id=` filter
+above. Never returns credentials.
+
+```json
+{
+  "data": {
+    "lines": [
+      {
+        "id": "…", "name": "Sales", "phone_number_id": "1234567890",
+        "status": "connected", "is_default": true,
+        "registered_at": "2026-01-01T00:00:00Z"
+      }
+    ]
+  }
+}
+```
 
 ### `GET /api/v1/conversations/{id}/messages`
 
