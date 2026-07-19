@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS instagram_accounts (
   -- the Page level, not the IG account directly.
   page_id TEXT NOT NULL,
   access_token TEXT NOT NULL,
+  -- GET webhook challenge verification matches this against
+  -- `hub.verify_token`, same pattern as whatsapp_lines.verify_token.
+  verify_token TEXT,
   status TEXT NOT NULL DEFAULT 'disconnected' CHECK (status IN ('connected', 'disconnected')),
   is_default BOOLEAN NOT NULL DEFAULT false,
   connected_at TIMESTAMPTZ,

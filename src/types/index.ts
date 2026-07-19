@@ -341,6 +341,8 @@ export interface InstagramAccount {
    *  the Page level. */
   page_id: string;
   access_token: string;
+  /** Matched against `hub.verify_token` on the GET webhook challenge. */
+  verify_token?: string;
   status: 'connected' | 'disconnected';
   /** Exactly one Instagram account per wacrm account has this set to true. */
   is_default: boolean;
