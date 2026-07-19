@@ -44,12 +44,23 @@ export async function checkPlanLimit(
   const limit = dimension === 'lines' ? plan.max_lines : plan.max_agents
   if (limit === null) return { allowed: true, limit: null, current: 0 }
 
-  const table = dimension === 'lines' ? 'whatsapp_lines' : 'profiles'
-  const { count } = await db
-    .from(table)
-    .select('id', { count: 'exact', head: true })
-    .eq('account_id', accountId)
+  // 'lines' is a combined channel-account count — WhatsApp lines and
+  // Instagram accounts share one plan limit (migration 043), not a
+  // separate dimension each.
+  let current: number
+  if (dimension === 'lines') {
+    const [{ count: lineCount }, { count: igCount }] = await Promise.all([
+      db.from('whatsapp_lines').select('id', { count: 'exact', head: true }).eq('account_id', accountId),
+      db.from('instagram_accounts').select('id', { count: 'exact', head: true }).eq('account_id', accountId),
+    ])
+    current = (lineCount ?? 0) + (igCount ?? 0)
+  } else {
+    const { count } = await db
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', accountId)
+    current = count ?? 0
+  }
 
-  const current = count ?? 0
   return { allowed: current < limit, limit, current }
 }

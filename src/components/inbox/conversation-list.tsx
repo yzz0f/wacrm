@@ -10,7 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, Camera, MessageCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
@@ -55,7 +55,7 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  const { lines } = useAuth();
+  const { lines, instagramAccounts } = useAuth();
 
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
@@ -74,7 +74,10 @@ export function ConversationList({
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
-  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
+  // Unified WhatsApp-line / Instagram-account filter. A single
+  // dimension covering both channel types, not two separate
+  // dropdowns — generalizes the pre-Instagram line-only filter.
+  const [selectedChannel, setSelectedChannel] = useState<{ type: 'line' | 'instagram'; id: string } | null>(null);
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -161,11 +164,18 @@ export function ConversationList({
     return m;
   }, [tags]);
 
-  const linesById = useMemo(() => {
+  // Channel name lookup, combined across both tables — UUIDs from
+  // different tables never collide, so one map is safe and simpler
+  // than keeping lines/Instagram maps separate everywhere a name is
+  // rendered.
+  const channelNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const l of lines) m.set(l.id, l.name);
+    for (const a of instagramAccounts) m.set(a.id, a.name);
     return m;
-  }, [lines]);
+  }, [lines, instagramAccounts]);
+
+  const totalChannels = lines.length + instagramAccounts.length;
 
   const filtered = useMemo(() => {
     let result = conversations;
@@ -186,8 +196,12 @@ export function ConversationList({
       );
     }
 
-    if (selectedLineId !== null) {
-      result = result.filter((c) => c.line_id === selectedLineId);
+    if (selectedChannel !== null) {
+      result = result.filter((c) =>
+        selectedChannel.type === 'line'
+          ? c.line_id === selectedChannel.id
+          : c.instagram_account_id === selectedChannel.id,
+      );
     }
 
     if (search.trim()) {
@@ -201,7 +215,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany, selectedLineId]);
+  }, [conversations, filter, search, selectedTagIds, selectedCompany, selectedChannel]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -318,18 +332,18 @@ export function ConversationList({
             </DropdownMenu>
           )}
 
-          {lines.length > 1 && (
+          {totalChannels > 1 && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
                   "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  selectedLineId
+                  selectedChannel
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
                 <span className="truncate">
-                  {selectedLineId ? linesById.get(selectedLineId) ?? t("line") : t("line")}
+                  {selectedChannel ? channelNameById.get(selectedChannel.id) ?? t("line") : t("line")}
                 </span>
                 <ChevronDown className="h-3 w-3 shrink-0" />
               </DropdownMenuTrigger>
@@ -338,10 +352,10 @@ export function ConversationList({
                 className="max-h-64 w-56 border-border bg-popover"
               >
                 <DropdownMenuItem
-                  onClick={() => setSelectedLineId(null)}
+                  onClick={() => setSelectedChannel(null)}
                   className={cn(
                     "text-sm",
-                    selectedLineId === null
+                    selectedChannel === null
                       ? "text-primary"
                       : "text-popover-foreground"
                   )}
@@ -351,15 +365,31 @@ export function ConversationList({
                 {lines.map((line) => (
                   <DropdownMenuItem
                     key={line.id}
-                    onClick={() => setSelectedLineId(line.id)}
+                    onClick={() => setSelectedChannel({ type: 'line', id: line.id })}
                     className={cn(
                       "text-sm",
-                      selectedLineId === line.id
+                      selectedChannel?.id === line.id
                         ? "text-primary"
                         : "text-popover-foreground"
                     )}
                   >
+                    <MessageCircle className="mr-1.5 h-3.5 w-3.5 shrink-0" />
                     <span className="truncate">{line.name}</span>
+                  </DropdownMenuItem>
+                ))}
+                {instagramAccounts.map((account) => (
+                  <DropdownMenuItem
+                    key={account.id}
+                    onClick={() => setSelectedChannel({ type: 'instagram', id: account.id })}
+                    className={cn(
+                      "text-sm",
+                      selectedChannel?.id === account.id
+                        ? "text-primary"
+                        : "text-popover-foreground"
+                    )}
+                  >
+                    <Camera className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{account.name}</span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -475,7 +505,13 @@ export function ConversationList({
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
                 t={t}
-                lineName={lines.length > 1 ? conv.line_id ? linesById.get(conv.line_id) : undefined : undefined}
+                lineName={
+                  totalChannels > 1
+                    ? (conv.line_id ?? conv.instagram_account_id)
+                      ? channelNameById.get((conv.line_id ?? conv.instagram_account_id) as string)
+                      : undefined
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -503,8 +539,9 @@ function ConversationItem({
   lineName,
 }: ConversationItemProps) {
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || t("unknown");
+  const displayName = contact?.name || contact?.phone || contact?.external_id || t("unknown");
   const initials = displayName.charAt(0).toUpperCase();
+  const isInstagram = !!conversation.instagram_account_id;
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
@@ -525,7 +562,7 @@ function ConversationItem({
       )}
     >
       {/* Avatar */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+      <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
         {contact?.avatar_url ? (
           <img
             src={contact.avatar_url}
@@ -534,6 +571,21 @@ function ConversationItem({
           />
         ) : (
           initials
+        )}
+        {/* Channel indicator — only meaningful once the account has
+            more than one channel connected; a lone WhatsApp line
+            needs no badge (matches lineName's own gating). */}
+        {lineName && (
+          <span
+            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-card bg-background"
+            title={isInstagram ? 'Instagram' : 'WhatsApp'}
+          >
+            {isInstagram ? (
+              <Camera className="h-2.5 w-2.5 text-muted-foreground" />
+            ) : (
+              <MessageCircle className="h-2.5 w-2.5 text-muted-foreground" />
+            )}
+          </span>
         )}
       </div>
 
