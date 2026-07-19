@@ -295,7 +295,7 @@ export default function BroadcastDetailPage() {
               </span>
             </div>
             <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
-              <span>{t('template', { name: broadcast.template_name })}</span>
+              <span>{t('template', { name: broadcast.template_name ?? 'Free text (Instagram)' })}</span>
               <span>-</span>
               <span>
                 {t('createdAt', { date: new Date(broadcast.created_at).toLocaleDateString() })}

@@ -464,8 +464,10 @@ export interface Broadcast {
   id: string;
   user_id: string;
   name: string;
-  template_name: string;
-  template_language: string;
+  /** Absent for an Instagram broadcast — see message_text instead
+   *  (migration 044, Instagram has no approved-template mechanism). */
+  template_name?: string;
+  template_language?: string;
   template_variables?: Record<string, unknown>;
   audience_filter?: Record<string, unknown>;
   scheduled_at?: string;
@@ -477,8 +479,14 @@ export interface Broadcast {
   replied_count: number;
   failed_count: number;
   created_at: string;
-  /** Which WhatsApp line this broadcast sends from. */
+  /** Which WhatsApp line this broadcast sends from. Exactly one of
+   *  `line_id` / `instagram_account_id` is set (migration 044). */
   line_id?: string;
+  /** Which Instagram account this broadcast sends from. Migration 044. */
+  instagram_account_id?: string;
+  /** Free-text body for an Instagram broadcast — Instagram has no
+   *  template mechanism to send instead. Migration 044. */
+  message_text?: string;
 }
 
 export interface BroadcastRecipient {
