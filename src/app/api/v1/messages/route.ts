@@ -23,7 +23,10 @@
 //       "params": ["A123"] | { "body": [...] }   // array = positional body; object = structured
 //     },
 //     "reply_to_message_id": "<uuid>",       // optional, must be in the same conversation
-//     "name": "Jane Doe"                     // optional, names a newly-created contact
+//     "name": "Jane Doe",                    // optional, names a newly-created contact
+//     "line_id": "<uuid>"                    // optional — which WhatsApp line to send from;
+//                                             // falls back to the account's default line
+//                                             // (see GET /api/v1/lines to discover an account's lines)
 //   }
 //
 // Response (201):

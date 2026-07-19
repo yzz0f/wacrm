@@ -152,6 +152,7 @@ export class WacrmClient {
     cursor?: string;
     status?: string;
     contact_id?: string;
+    line_id?: string;
   }): Promise<Paginated<unknown>> {
     return this.list('/conversations', query);
   }
@@ -165,6 +166,12 @@ export class WacrmClient {
     query: { limit?: number; cursor?: string },
   ): Promise<Paginated<unknown>> {
     return this.list(`/conversations/${encodeURIComponent(id)}/messages`, query);
+  }
+
+  // --- Lines ----------------------------------------------------------
+
+  listLines(): Promise<{ data: unknown }> {
+    return this.request('GET', '/lines');
   }
 
   // --- Broadcasts ---------------------------------------------------

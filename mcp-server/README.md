@@ -68,19 +68,20 @@ assistant change data or send messages, add the write guards:
 Read tools are always available. Write and broadcast tools appear only
 when their guard is set.
 
-| Tool                 | Group     | Scope needed         | What it does                                    |
-| -------------------- | --------- | -------------------- | ----------------------------------------------- |
-| `whoami`             | read      | _(any valid key)_    | Show the account + scopes the key carries       |
-| `list_contacts`      | read      | `contacts:read`      | List/search contacts (paginated)                |
-| `get_contact`        | read      | `contacts:read`      | Read one contact                                |
-| `list_conversations` | read      | `conversations:read` | List conversations, filter by status/contact    |
-| `get_conversation`   | read      | `conversations:read` | Read one conversation                           |
-| `list_messages`      | read      | `messages:read`      | List a conversation's messages                  |
-| `get_broadcast`      | read      | `broadcasts:send`    | Poll a broadcast's delivery status              |
-| `send_message`       | write     | `messages:send`      | Send a WhatsApp message (text/template/media)   |
-| `create_contact`     | write     | `contacts:write`     | Create (find-or-create) a contact               |
-| `update_contact`     | write     | `contacts:write`     | Update a contact / replace its tags             |
-| `send_broadcast`     | broadcast | `broadcasts:send`    | Launch a template broadcast (requires `confirm`)|
+| Tool                 | Group     | Scope needed         | What it does                                                                   |
+| -------------------- | --------- | -------------------- | ------------------------------------------------------------------------------ |
+| `whoami`             | read      | _(any valid key)_    | Show the account + scopes the key carries                                      |
+| `list_contacts`      | read      | `contacts:read`      | List/search contacts (paginated)                                               |
+| `get_contact`        | read      | `contacts:read`      | Read one contact                                                               |
+| `list_conversations` | read      | `conversations:read` | List conversations, filter by status/contact/line                              |
+| `get_conversation`   | read      | `conversations:read` | Read one conversation                                                          |
+| `list_messages`      | read      | `messages:read`      | List a conversation's messages                                                 |
+| `list_lines`         | read      | _(any valid key)_    | List the account's WhatsApp lines                                              |
+| `get_broadcast`      | read      | `broadcasts:send`    | Poll a broadcast's delivery status                                             |
+| `send_message`       | write     | `messages:send`      | Send a WhatsApp message (text/template/media), optionally from a specific line |
+| `create_contact`     | write     | `contacts:write`     | Create (find-or-create) a contact                                              |
+| `update_contact`     | write     | `contacts:write`     | Update a contact / replace its tags                                            |
+| `send_broadcast`     | broadcast | `broadcasts:send`    | Launch a template broadcast (requires `confirm`)                               |
 
 ## Safety model
 

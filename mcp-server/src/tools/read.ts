@@ -68,10 +68,14 @@ export function registerReadTools(server: McpServer, client: WacrmClient): void 
     {
       title: 'List conversations',
       description:
-        'List conversations, newest first. Optionally filter by status (open / pending / closed) or by contact id. Paginated.',
+        'List conversations, newest first. Optionally filter by status (open / pending / closed), by contact id, or by which WhatsApp line the conversation is on (call list_lines to discover line ids — most accounts have only one line, so this filter is rarely needed). Paginated.',
       inputSchema: {
         status: z.enum(['open', 'pending', 'closed']).optional().describe('Conversation status filter.'),
         contact_id: z.string().optional().describe('Only conversations for this contact.'),
+        line_id: z
+          .string()
+          .optional()
+          .describe('Only conversations on this WhatsApp line. See list_lines.'),
         limit: z.number().int().min(1).max(100).optional().describe('Page size, 1–100 (default 50).'),
         cursor: z.string().optional().describe('Opaque pagination cursor.'),
       },
@@ -109,6 +113,18 @@ export function registerReadTools(server: McpServer, client: WacrmClient): void 
     handle(async ({ conversation_id, limit, cursor }) =>
       jsonResult(await client.listConversationMessages(conversation_id, { limit, cursor })),
     ),
+  );
+
+  server.registerTool(
+    'list_lines',
+    {
+      title: 'List WhatsApp lines',
+      description:
+        'List the account\'s connected WhatsApp lines (name, phone number, connection status, which one is the default). Most accounts have exactly one line and this is rarely needed — call it when the account might have more than one and you need a line_id for send_message or the list_conversations filter.',
+      inputSchema: {},
+      annotations: { ...READ_ONLY, title: 'List WhatsApp lines' },
+    },
+    handle(async () => jsonResult(await client.listLines())),
   );
 
   server.registerTool(
