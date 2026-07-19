@@ -152,6 +152,30 @@ Key pages:
 - [Architecture](https://wacrm.tech/docs/architecture)
 - [Troubleshooting](https://wacrm.tech/docs/troubleshooting)
 
+## Instagram (optional)
+
+The shared inbox can also receive and reply to Instagram Direct
+Messages, alongside WhatsApp — same inbox, same contacts/tags/notes
+model, a channel icon on each conversation, and a combined channel
+filter once you've connected more than one line/account.
+
+This is the first of several planned phases; **not yet supported for
+Instagram**: templates, broadcasts, automations, Flows, and the AI
+reply assistant (Instagram has no equivalent to WhatsApp's approved
+templates, so "broadcasts" there will need its own design later).
+
+To turn it on:
+
+1. Create a Meta app with Instagram Messaging enabled, linked to a
+   Facebook Page connected to the Instagram business account you want
+   to use.
+2. In **Settings → Instagram**, paste the Instagram Business Account
+   ID, the linked Page ID, and a Page access token. Connection is
+   manual entry, same as WhatsApp — no OAuth flow in this phase.
+3. Point the app's webhook at `https://your-crm.example.com/api/instagram/webhook`.
+   It reuses the same `META_APP_SECRET` as the WhatsApp webhook — no
+   new environment variable needed.
+
 ## Platform admin panel (optional)
 
 wacrm runs perfectly well self-hosted for a single team with no setup
