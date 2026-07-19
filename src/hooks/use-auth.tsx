@@ -20,7 +20,7 @@ import {
   isAccountRole,
   type AccountRole,
 } from "@/lib/auth/roles";
-import type { WhatsAppLine } from "@/types";
+import type { WhatsAppLine, InstagramAccount } from "@/types";
 
 interface Profile {
   id: string;
@@ -94,6 +94,9 @@ interface AuthContextValue {
    *  (inbox filter, badges, broadcast/automation selectors) when
    *  there's nothing to choose between. False while loading. */
   hasSingleLine: boolean;
+  /** Every connected Instagram account on the account, same fetch
+   *  pattern as `lines`. Empty while loading. */
+  instagramAccounts: InstagramAccount[];
   /** Account default deal currency. Falls back to DEFAULT_CURRENCY
    *  while loading or when no account is resolved, so callers can use
    *  it unconditionally. */
@@ -126,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [lines, setLines] = useState<WhatsAppLine[]>([]);
+  const [instagramAccounts, setInstagramAccounts] = useState<InstagramAccount[]>([]);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
@@ -221,6 +225,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             setLines((lineRows ?? []) as WhatsAppLine[]);
           }
+
+          // Same fetch pattern as lines, for Instagram accounts.
+          const { data: igRows, error: igErr } = await supabase
+            .from("instagram_accounts")
+            .select("*")
+            .eq("account_id", data.account_id)
+            .order("is_default", { ascending: false })
+            .order("created_at", { ascending: true });
+          if (igErr) {
+            console.error("[AuthProvider] fetchInstagramAccounts error:", {
+              message: igErr.message,
+              details: igErr.details,
+              hint: igErr.hint,
+              code: igErr.code,
+            });
+            setInstagramAccounts([]);
+          } else {
+            setInstagramAccounts((igRows ?? []) as InstagramAccount[]);
+          }
         }
 
         // Narrow the DB enum into our AccountRole union. The DB
@@ -249,6 +272,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccount(accountRow);
       } else {
         setLines([]);
+        setInstagramAccounts([]);
         lastFetchedUserIdRef.current = null;
       }
     } catch (err) {
@@ -322,6 +346,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null);
         setAccount(null);
         setLines([]);
+        setInstagramAccounts([]);
         setProfileLoading(false);
       }
 
@@ -342,6 +367,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
     setAccount(null);
     setLines([]);
+    setInstagramAccounts([]);
     window.location.href = "/login";
   }, []);
 
@@ -381,6 +407,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshProfile,
         account,
         lines,
+        instagramAccounts,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         ...derived,
       }}
@@ -412,6 +439,7 @@ export function useAuth(): AuthContextValue {
       refreshProfile: async () => {},
       account: null,
       lines: [],
+      instagramAccounts: [],
       hasSingleLine: false,
       defaultCurrency: DEFAULT_CURRENCY,
       accountId: null,
