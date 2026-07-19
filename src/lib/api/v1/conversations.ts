@@ -70,7 +70,12 @@ export function serializeConversation(conv: Conversation): ApiConversation {
     contact: c
       ? {
           id: c.id,
-          phone: c.phone,
+          // Public API v1 contract predates Instagram (contact.phone
+          // is now optional on the shared Contact type) — coerce to
+          // '' rather than widen the wire shape, which is out of
+          // scope here. Every contact this endpoint currently reads
+          // is WhatsApp, so c.phone is always set in practice.
+          phone: c.phone ?? '',
           name: c.name ?? null,
           email: c.email ?? null,
           company: c.company ?? null,
