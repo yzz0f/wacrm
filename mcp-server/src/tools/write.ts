@@ -51,6 +51,12 @@ export function registerWriteTools(server: McpServer, client: WacrmClient): void
           .string()
           .optional()
           .describe('Optional id of a message in the same conversation to reply to.'),
+        line_id: z
+          .string()
+          .optional()
+          .describe(
+            'Which WhatsApp line to send from, for accounts with more than one (see list_lines). Defaults to the account\'s default line — omit this unless the user specified a line or the account has multiple.',
+          ),
       },
       annotations: { title: 'Send WhatsApp message', readOnlyHint: false, openWorldHint: true },
     },
