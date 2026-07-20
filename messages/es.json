@@ -1007,6 +1007,7 @@
       },
       "addStep": "Agregar paso",
       "config": {
+        "instagramNotSupportedHint": "Solo se envía en conversaciones de WhatsApp — en Instagram este paso fallará.",
         "messageText": "Texto del mensaje",
         "placeholderMessageText": "¡Hola! Gracias por escribirnos…",
         "tagLabel": "Etiqueta",
@@ -1137,6 +1138,7 @@
       "noNodeSelected": "Ningún nodo seleccionado",
       "noNodeDesc": "Selecciona un nodo en el lienzo para editar su configuración.",
       "form": {
+        "instagramNotSupportedHint": "Solo se envía en conversaciones de WhatsApp — en Instagram este paso fallará.",
         "advancesTo": "Avanza a",
         "textToCustomer": "Texto enviado al cliente",
         "promptToCustomer": "Pregunta enviada al cliente",

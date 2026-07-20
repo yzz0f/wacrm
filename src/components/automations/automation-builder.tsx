@@ -1331,21 +1331,27 @@ function StepEditor({
       // The whole step_config IS the interactive payload; the shared
       // builder edits it in place (and enforces Meta's limits + preview).
       return (
-        <InteractiveBuilder
-          value={asInteractive(cfg)}
-          onChange={(payload) =>
-            onChange({ ...step, step_config: toStepConfig(payload) })
-          }
-        />
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">{t("config.instagramNotSupportedHint")}</p>
+          <InteractiveBuilder
+            value={asInteractive(cfg)}
+            onChange={(payload) =>
+              onChange({ ...step, step_config: toStepConfig(payload) })
+            }
+          />
+        </div>
       )
     case "send_template":
       return (
-        <SendTemplateFields
-          templateName={(cfg.template_name as string) ?? ""}
-          language={(cfg.language as string) ?? ""}
-          onChange={(patch) => set(patch)}
-          t={t}
-        />
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">{t("config.instagramNotSupportedHint")}</p>
+          <SendTemplateFields
+            templateName={(cfg.template_name as string) ?? ""}
+            language={(cfg.language as string) ?? ""}
+            onChange={(patch) => set(patch)}
+            t={t}
+          />
+        </div>
       )
     case "add_tag":
     case "remove_tag":

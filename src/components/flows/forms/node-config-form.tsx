@@ -97,26 +97,32 @@ export function NodeConfigForm({
 
     case "send_buttons":
       return (
-        <SendButtonsForm
-          cfg={cfg as SendButtonsCfg}
-          allNodes={allNodes}
-          currentKey={node.node_key}
-          onUpdateConfig={onUpdateConfig}
-          showAdvanced={showAdvanced}
-          t={t}
-        />
+        <>
+          <p className="text-xs text-muted-foreground">{t("instagramNotSupportedHint")}</p>
+          <SendButtonsForm
+            cfg={cfg as SendButtonsCfg}
+            allNodes={allNodes}
+            currentKey={node.node_key}
+            onUpdateConfig={onUpdateConfig}
+            showAdvanced={showAdvanced}
+            t={t}
+          />
+        </>
       );
 
     case "send_list":
       return (
-        <SendListForm
-          cfg={cfg as SendListCfg}
-          allNodes={allNodes}
-          currentKey={node.node_key}
-          onUpdateConfig={onUpdateConfig}
-          showAdvanced={showAdvanced}
-          t={t}
-        />
+        <>
+          <p className="text-xs text-muted-foreground">{t("instagramNotSupportedHint")}</p>
+          <SendListForm
+            cfg={cfg as SendListCfg}
+            allNodes={allNodes}
+            currentKey={node.node_key}
+            onUpdateConfig={onUpdateConfig}
+            showAdvanced={showAdvanced}
+            t={t}
+          />
+        </>
       );
 
     case "send_media":
