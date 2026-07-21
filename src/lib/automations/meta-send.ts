@@ -11,6 +11,7 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { sendInstagramText } from '@/lib/instagram/meta-instagram-api'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -118,28 +119,83 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // new tenancy column.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, platform, external_id')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
+  // Resolve the channel from the conversation itself — an automation
+  // always replies through the same line/account the triggering
+  // message came in on, never a different one of the same account.
+  const { data: conversation } = await db
+    .from('conversations')
+    .select('line_id, instagram_account_id')
+    .eq('id', input.conversationId)
+    .eq('account_id', input.accountId)
+    .maybeSingle()
+
+  if (conversation?.instagram_account_id) {
+    // No template/interactive equivalent exists for Instagram yet —
+    // fail fast with a clear error instead of falling through to the
+    // WhatsApp phone check below, which would reject with a confusing
+    // "contact phone invalid" for an Instagram contact (phone is null).
+    if (input.kind === 'template') {
+      throw new Error('Instagram conversations do not support templates yet')
+    }
+    if (!contact.external_id) {
+      throw new Error('contact has no Instagram external_id')
+    }
+
+    const { data: igAccount, error: igAccountErr } = await db
+      .from('instagram_accounts')
+      .select('id, access_token')
+      .eq('id', conversation.instagram_account_id)
+      .eq('account_id', input.accountId)
+      .maybeSingle()
+    if (igAccountErr || !igAccount) {
+      throw new Error('Instagram account not configured for this account')
+    }
+
+    const { messageId } = await sendInstagramText({
+      pageAccessToken: decrypt(igAccount.access_token),
+      recipientId: contact.external_id,
+      text: input.text,
+    })
+
+    const { error: msgErr } = await db.from('messages').insert({
+      conversation_id: input.conversationId,
+      sender_type: 'bot',
+      content_type: 'text',
+      content_text: input.text,
+      message_id: messageId,
+      status: 'sent',
+    })
+    if (msgErr) {
+      throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
+    }
+
+    await db
+      .from('conversations')
+      .update({
+        last_message_text: input.text,
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', input.conversationId)
+
+    return { whatsapp_message_id: messageId }
+  }
+
+  if (!contact.phone) {
+    throw new Error('contact not found for this account')
+  }
   const sanitized = sanitizePhoneForMeta(contact.phone)
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
-
-  // Resolve the line to reply on from the conversation itself — an
-  // automation always replies through the same number the triggering
-  // message came in on, never a different line of the same account.
-  const { data: conversation } = await db
-    .from('conversations')
-    .select('line_id')
-    .eq('id', input.conversationId)
-    .eq('account_id', input.accountId)
-    .maybeSingle()
 
   const lineQuery = conversation?.line_id
     ? db.from('whatsapp_lines').select('*').eq('id', conversation.line_id)

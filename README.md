@@ -167,8 +167,13 @@ It's a separate, simpler flow (**Broadcasts → New Instagram
 broadcast**) rather than a branch of the WhatsApp wizard, since
 there's no template/personalization step to share.
 
-This is phases 1-2 of a larger effort; **not yet supported for
-Instagram**: automations, Flows, and the AI reply assistant.
+Automations and Flows can also trigger off Instagram messages and reply
+to them — same triggers and builder as WhatsApp, but only text/media
+send steps work on Instagram (templates, buttons, and lists stay
+WhatsApp-only; the builder flags those steps accordingly).
+
+This is phases 1-3 of a larger effort; **not yet supported for
+Instagram**: the AI reply assistant.
 
 To turn it on:
 

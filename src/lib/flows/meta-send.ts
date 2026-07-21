@@ -15,27 +15,47 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { sendInstagramText, sendInstagramMedia, type InstagramMediaKind } from '@/lib/instagram/meta-instagram-api'
 import { supabaseAdmin } from './admin-client'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { WhatsAppLine } from '@/types'
+
+type ResolvedChannel =
+  | { channel: 'whatsapp'; config: WhatsAppLine }
+  | { channel: 'instagram'; pageAccessToken: string }
 
 /**
- * Resolve the WhatsApp line to send on from the conversation itself —
- * a flow always replies through the same number the triggering
- * message came in on. Falls back to the account's default line if
- * the conversation predates line_id (should not happen post-Fase-10,
- * but keeps sends working during the rollout window).
+ * Resolve the channel (and its send config) to reply on from the
+ * conversation itself — a flow always replies through the same
+ * line/Instagram account the triggering message came in on. Falls
+ * back to the account's default WhatsApp line if the conversation
+ * predates line_id (should not happen post-Fase-10, but keeps sends
+ * working during the rollout window).
  */
-async function resolveLineForConversation(
+async function resolveChannelForConversation(
   db: SupabaseClient,
   accountId: string,
   conversationId: string,
-) {
+): Promise<ResolvedChannel> {
   const { data: conversation } = await db
     .from('conversations')
-    .select('line_id')
+    .select('line_id, instagram_account_id')
     .eq('id', conversationId)
     .eq('account_id', accountId)
     .maybeSingle()
+
+  if (conversation?.instagram_account_id) {
+    const { data: igAccount, error } = await db
+      .from('instagram_accounts')
+      .select('id, access_token')
+      .eq('id', conversation.instagram_account_id)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (error || !igAccount) {
+      throw new Error('Instagram account not configured for this account')
+    }
+    return { channel: 'instagram', pageAccessToken: decrypt(igAccount.access_token) }
+  }
 
   const lineQuery = conversation?.line_id
     ? db.from('whatsapp_lines').select('*').eq('id', conversation.line_id)
@@ -44,7 +64,18 @@ async function resolveLineForConversation(
         .select('*')
         .eq('account_id', accountId)
         .eq('is_default', true)
-  return lineQuery.single()
+  const { data: config, error: configErr } = await lineQuery.single()
+  if (configErr || !config) {
+    throw new Error('WhatsApp not configured for this account')
+  }
+  return { channel: 'whatsapp', config }
+}
+
+const INSTAGRAM_MEDIA_KIND: Record<MediaKind, InstagramMediaKind> = {
+  image: 'image',
+  video: 'video',
+  audio: 'audio',
+  document: 'file',
 }
 
 // ------------------------------------------------------------
@@ -100,28 +131,60 @@ export async function engineSendText(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, external_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
+  const resolved = await resolveChannelForConversation(db, args.accountId, args.conversationId)
+
+  if (resolved.channel === 'instagram') {
+    if (!contact.external_id) {
+      throw new Error('contact has no Instagram external_id')
+    }
+    const { messageId } = await sendInstagramText({
+      pageAccessToken: resolved.pageAccessToken,
+      recipientId: contact.external_id,
+      text: args.text,
+    })
+
+    const { error: msgErr } = await db.from('messages').insert({
+      conversation_id: args.conversationId,
+      sender_type: 'bot',
+      content_type: 'text',
+      content_text: args.text,
+      message_id: messageId,
+      status: 'sent',
+      ai_generated: args.aiGenerated ?? false,
+    })
+    if (msgErr) {
+      throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
+    }
+
+    await db
+      .from('conversations')
+      .update({
+        last_message_text: args.text,
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', args.conversationId)
+
+    return { whatsapp_message_id: messageId }
+  }
+
+  if (!contact.phone) {
+    throw new Error('contact not found for this account')
+  }
   const sanitized = sanitizePhoneForMeta(contact.phone)
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await resolveLineForConversation(
-    db,
-    args.accountId,
-    args.conversationId,
-  )
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
-  }
-
+  const config = resolved.config
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
@@ -210,28 +273,61 @@ export async function engineSendMedia(
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
-    .select('id, phone')
+    .select('id, phone, external_id')
     .eq('id', args.contactId)
     .eq('account_id', args.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
+  const resolved = await resolveChannelForConversation(db, args.accountId, args.conversationId)
+
+  if (resolved.channel === 'instagram') {
+    if (!contact.external_id) {
+      throw new Error('contact has no Instagram external_id')
+    }
+    const { messageId } = await sendInstagramMedia({
+      pageAccessToken: resolved.pageAccessToken,
+      recipientId: contact.external_id,
+      mediaKind: INSTAGRAM_MEDIA_KIND[args.kind],
+      mediaUrl: args.link,
+    })
+
+    const preview = args.caption?.trim() || `[${args.kind}]`
+    const { error: msgErr } = await db.from('messages').insert({
+      conversation_id: args.conversationId,
+      sender_type: 'bot',
+      content_type: args.kind,
+      content_text: args.caption ?? null,
+      message_id: messageId,
+      status: 'sent',
+    })
+    if (msgErr) {
+      throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
+    }
+
+    await db
+      .from('conversations')
+      .update({
+        last_message_text: preview,
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', args.conversationId)
+
+    return { whatsapp_message_id: messageId }
+  }
+
+  if (!contact.phone) {
+    throw new Error('contact not found for this account')
+  }
   const sanitized = sanitizePhoneForMeta(contact.phone)
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await resolveLineForConversation(
-    db,
-    args.accountId,
-    args.conversationId,
-  )
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
-  }
-
+  const config = resolved.config
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
@@ -358,31 +454,32 @@ async function sendInteractiveViaMeta(
   const db = supabaseAdmin()
 
   // Scope the contact lookup by account_id — same defense-in-depth
-  // rationale as automations/meta-send.ts. The line is resolved from
-  // the conversation via resolveLineForConversation(), not accountId
-  // directly (an account can have more than one line since Fase 1).
+  // rationale as automations/meta-send.ts. The channel is resolved
+  // from the conversation via resolveChannelForConversation(), not
+  // accountId directly (an account can have more than one line/
+  // Instagram account since Fase 1 / the Instagram foundation).
   const { data: contact, error: contactErr } = await db
     .from('contacts')
     .select('id, phone')
     .eq('id', input.contactId)
     .eq('account_id', input.accountId)
     .maybeSingle()
-  if (contactErr || !contact?.phone) {
+  if (contactErr || !contact) {
     throw new Error('contact not found for this account')
   }
 
+  const resolved = await resolveChannelForConversation(db, input.accountId, input.conversationId)
+  if (resolved.channel === 'instagram') {
+    throw new Error('Instagram conversations do not support buttons/lists yet')
+  }
+  const config = resolved.config
+
+  if (!contact.phone) {
+    throw new Error('contact not found for this account')
+  }
   const sanitized = sanitizePhoneForMeta(contact.phone)
   if (!isValidE164(sanitized)) {
     throw new Error(`contact phone invalid: ${contact.phone}`)
-  }
-
-  const { data: config, error: configErr } = await resolveLineForConversation(
-    db,
-    input.accountId,
-    input.conversationId,
-  )
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
   }
 
   const accessToken = decrypt(config.access_token)

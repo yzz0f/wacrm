@@ -5,18 +5,21 @@ import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { findExistingInstagramContact } from '@/lib/contacts/dedupe-instagram'
 import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { runAutomationsForTrigger } from '@/lib/automations/engine'
+import { dispatchInboundToFlows } from '@/lib/flows/engine'
 
 // ============================================================
 // Instagram DM webhook — Fase 3 of the Instagram foundation
-// (docs/superpowers/plans/2026-07-19-instagram-foundation-plan.md).
+// (docs/superpowers/plans/2026-07-19-instagram-foundation-plan.md),
+// with Flows + Automations dispatch added in
+// docs/superpowers/plans/2026-07-20-instagram-automations-flows-plan.md.
 //
 // Deliberately mirrors src/app/api/whatsapp/webhook/route.ts's shape
 // (GET challenge, POST + HMAC verify + after(), find-or-create
-// contact/conversation, race handling on unique-violation) but does
-// NOT call into Flows, automations, or AI auto-reply — those are
-// out of scope for this sub-project (2-4 handle them). It also skips
-// status-update handling, reactions, and broadcast-reply flagging,
-// none of which exist for Instagram yet.
+// contact/conversation, race handling on unique-violation). Still
+// skips status-update handling, reactions, and broadcast-reply
+// flagging (none of which exist for Instagram yet), and AI auto-reply
+// (sub-proyecto 4).
 //
 // Payload shape: Instagram Messaging webhooks use the Messenger-
 // Platform-style `entry[].messaging[]` format (object: "instagram"),
@@ -371,6 +374,16 @@ async function processInstagramMessage(
   const contentText = message.text ?? null
   const mediaUrl = message.attachments?.[0]?.payload?.url ?? null
 
+  // Determine whether this is the contact's very first inbound message
+  // BEFORE we insert, so the count is accurate — same reasoning as
+  // src/app/api/whatsapp/webhook/route.ts:669-678.
+  const { count: priorCustomerMsgCount } = await supabaseAdmin()
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', conversation.id)
+    .eq('sender_type', 'customer')
+  const isFirstInboundMessage = (priorCustomerMsgCount ?? 0) === 0
+
   const { error: msgError } = await supabaseAdmin().from('messages').insert({
     conversation_id: conversation.id,
     sender_type: 'customer',
@@ -401,9 +414,49 @@ async function processInstagramMessage(
     console.error('[instagram/webhook] error updating conversation:', convError)
   }
 
-  // Deliberately no flagBroadcastReplyIfAny / dispatchInboundToFlows /
-  // automations / dispatchInboundToAiReply here — all out of scope
-  // for this sub-project (see the file header comment).
+  // Deliberately no flagBroadcastReplyIfAny / dispatchInboundToAiReply
+  // here — broadcast replies aren't tracked for Instagram, and AI
+  // auto-reply is sub-proyecto 4. Flow + automation dispatch mirrors
+  // src/app/api/whatsapp/webhook/route.ts:740-807; Instagram has no
+  // interactive taps yet, so the inbound message is always `kind: 'text'`
+  // and the `interactive_reply` trigger never fires from here.
+  const flowResult = await dispatchInboundToFlows({
+    accountId,
+    userId: accountOwnerUserId,
+    contactId: contactRecord.id,
+    conversationId: conversation.id,
+    message: {
+      kind: 'text',
+      text: contentText ?? '',
+      meta_message_id: message.mid,
+    },
+    isFirstInboundMessage,
+  })
+  const flowConsumed = flowResult.consumed
+
+  const automationTriggers: (
+    | 'new_contact_created'
+    | 'first_inbound_message'
+    | 'new_message_received'
+    | 'keyword_match'
+  )[] = []
+  if (!flowConsumed) {
+    automationTriggers.push('new_message_received', 'keyword_match')
+  }
+  if (contactOutcome.wasCreated) automationTriggers.unshift('new_contact_created')
+  if (isFirstInboundMessage) automationTriggers.unshift('first_inbound_message')
+  for (const triggerType of automationTriggers) {
+    runAutomationsForTrigger({
+      accountId,
+      triggerType,
+      contactId: contactRecord.id,
+      context: {
+        message_text: contentText ?? '',
+        conversation_id: conversation.id,
+      },
+    }).catch((err) => console.error('[automations] dispatch failed:', err))
+  }
+
   await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {
     conversation_id: conversation.id,
     contact_id: contactRecord.id,

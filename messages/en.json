@@ -1007,6 +1007,7 @@
       },
       "addStep": "Add step",
       "config": {
+        "instagramNotSupportedHint": "Only sends in WhatsApp conversations — this step will fail on Instagram.",
         "messageText": "Message text",
         "placeholderMessageText": "Hi! Thanks for reaching out…",
         "tagLabel": "Tag",
@@ -1137,6 +1138,7 @@
       "noNodeSelected": "No node selected",
       "noNodeDesc": "Select a node on the canvas to edit its configuration.",
       "form": {
+        "instagramNotSupportedHint": "Only sends in WhatsApp conversations — this step will fail on Instagram.",
         "advancesTo": "Advances to",
         "textToCustomer": "Text sent to the customer",
         "promptToCustomer": "Prompt sent to the customer",
