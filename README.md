@@ -159,10 +159,16 @@ Messages, alongside WhatsApp — same inbox, same contacts/tags/notes
 model, a channel icon on each conversation, and a combined channel
 filter once you've connected more than one line/account.
 
-This is the first of several planned phases; **not yet supported for
-Instagram**: templates, broadcasts, automations, Flows, and the AI
-reply assistant (Instagram has no equivalent to WhatsApp's approved
-templates, so "broadcasts" there will need its own design later).
+Broadcasts are supported too, with Instagram's real constraints made
+explicit rather than hidden: no approved-template mechanism like
+WhatsApp, so a broadcast is a free-text message sent only to contacts
+who wrote to you in the last 24 hours (Instagram's messaging window).
+It's a separate, simpler flow (**Broadcasts → New Instagram
+broadcast**) rather than a branch of the WhatsApp wizard, since
+there's no template/personalization step to share.
+
+This is phases 1-2 of a larger effort; **not yet supported for
+Instagram**: automations, Flows, and the AI reply assistant.
 
 To turn it on:
 
