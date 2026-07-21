@@ -7,19 +7,21 @@ import { isUniqueViolation } from '@/lib/contacts/dedupe'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 
 // ============================================================
 // Instagram DM webhook — Fase 3 of the Instagram foundation
-// (docs/superpowers/plans/2026-07-19-instagram-foundation-plan.md),
-// with Flows + Automations dispatch added in
-// docs/superpowers/plans/2026-07-20-instagram-automations-flows-plan.md.
+// (docs/superpowers/plans/2026-07-19-instagram-foundation-plan.md), with
+// Flows + Automations dispatch added in
+// docs/superpowers/plans/2026-07-20-instagram-automations-flows-plan.md,
+// and AI auto-reply dispatch added in
+// docs/superpowers/plans/2026-07-20-instagram-ai-autoreply-plan.md.
 //
 // Deliberately mirrors src/app/api/whatsapp/webhook/route.ts's shape
 // (GET challenge, POST + HMAC verify + after(), find-or-create
 // contact/conversation, race handling on unique-violation). Still
 // skips status-update handling, reactions, and broadcast-reply
-// flagging (none of which exist for Instagram yet), and AI auto-reply
-// (sub-proyecto 4).
+// flagging — none of which exist for Instagram yet.
 //
 // Payload shape: Instagram Messaging webhooks use the Messenger-
 // Platform-style `entry[].messaging[]` format (object: "instagram"),
@@ -455,6 +457,21 @@ async function processInstagramMessage(
         conversation_id: conversation.id,
       },
     }).catch((err) => console.error('[automations] dispatch failed:', err))
+  }
+
+  // AI auto-reply. Runs only for plain-text inbound the Flow runner did
+  // NOT consume (flows win over the LLM) — same condition as
+  // src/app/api/whatsapp/webhook/route.ts:815, minus the interactive-tap
+  // exclusion (Instagram has no interactive taps to receive in this
+  // scope). `dispatchInboundToAiReply` owns its own eligibility gates
+  // and try/catch, and never throws.
+  if (!flowConsumed && contentText?.trim()) {
+    await dispatchInboundToAiReply({
+      accountId,
+      conversationId: conversation.id,
+      contactId: contactRecord.id,
+      configOwnerUserId: accountOwnerUserId,
+    })
   }
 
   await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {

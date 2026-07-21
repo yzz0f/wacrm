@@ -172,8 +172,13 @@ to them — same triggers and builder as WhatsApp, but only text/media
 send steps work on Instagram (templates, buttons, and lists stay
 WhatsApp-only; the builder flags those steps accordingly).
 
-This is phases 1-3 of a larger effort; **not yet supported for
-Instagram**: the AI reply assistant.
+The AI reply assistant works on Instagram too, same eligibility rules
+and knowledge base as WhatsApp — it's channel-agnostic once a
+conversation exists, so no separate setup is needed beyond what's
+already described below.
+
+This completes the Instagram support effort (4 phases: foundation,
+broadcasts, automations/flows, AI auto-reply).
 
 To turn it on:
 
